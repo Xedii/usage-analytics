@@ -22,9 +22,8 @@
 
 export { usageAnalyticsPlugin as default } from './plugin';
 export {
-  usageAnalyticsApi,
-  usageAnalyticsImplementation,
-  usageAnalyticsPage,
+  UsageAnalyticsPage,
+  usageAnalyticsCollectorApi,
   usageAnalyticsPlugin,
 } from './plugin';
 export {
@@ -35,4 +34,3 @@ export {
 } from './api/UsageAnalyticsApi';
 export { UsageAnalyticsClient } from './api/UsageAnalyticsClient';
 export { UsageAnalyticsCollector } from './api/UsageAnalyticsCollector';
-export { UsageAnalyticsPageWithPermission as UsageAnalyticsPage } from './components/UsageAnalyticsPage/UsageAnalyticsPage';

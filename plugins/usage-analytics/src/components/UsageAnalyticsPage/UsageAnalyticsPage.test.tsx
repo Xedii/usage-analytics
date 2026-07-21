@@ -19,7 +19,7 @@ import {
   UsageAnalyticsApi,
   usageAnalyticsApiRef,
 } from '../../api/UsageAnalyticsApi';
-import { UsageAnalyticsPage } from './UsageAnalyticsPage';
+import { UsageAnalyticsPageContent } from './UsageAnalyticsPage';
 
 const api: jest.Mocked<UsageAnalyticsApi> = {
   getOverview: jest.fn().mockResolvedValue({
@@ -63,7 +63,7 @@ describe('UsageAnalyticsPage', () => {
   it('renders aggregate and plugin reports', async () => {
     await renderInTestApp(
       <TestApiProvider apis={[[usageAnalyticsApiRef, api]]}>
-        <UsageAnalyticsPage />
+        <UsageAnalyticsPageContent />
       </TestApiProvider>,
     );
 

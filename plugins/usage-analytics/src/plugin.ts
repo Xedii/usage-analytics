@@ -21,12 +21,21 @@ import {
   discoveryApiRef,
   fetchApiRef,
 } from '@backstage/core-plugin-api';
-import {
-  UsageAnalyticsClient,
-  usageAnalyticsApiRef,
-} from '@backstage/plugin-usage-analytics';
-import { LegacyUsageAnalyticsCollector } from './LegacyUsageAnalyticsCollector';
+import { UsageAnalyticsClient } from './api/UsageAnalyticsClient';
+import { UsageAnalyticsCollector } from './api/UsageAnalyticsCollector';
+import { usageAnalyticsApiRef } from './api/UsageAnalyticsApi';
 import { rootRouteRef } from './routes';
+
+/** @public */
+export const usageAnalyticsCollectorApi = createApiFactory({
+  api: analyticsApiRef,
+  deps: {
+    discoveryApi: discoveryApiRef,
+    fetchApi: fetchApiRef,
+  },
+  factory: ({ discoveryApi, fetchApi }) =>
+    new UsageAnalyticsCollector({ discoveryApi, fetchApi }),
+});
 
 /** @public */
 export const usageAnalyticsPlugin = createPlugin({
@@ -37,15 +46,12 @@ export const usageAnalyticsPlugin = createPlugin({
   apis: [
     createApiFactory({
       api: usageAnalyticsApiRef,
-      deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
+      deps: {
+        discoveryApi: discoveryApiRef,
+        fetchApi: fetchApiRef,
+      },
       factory: ({ discoveryApi, fetchApi }) =>
         new UsageAnalyticsClient(discoveryApi, fetchApi),
-    }),
-    createApiFactory({
-      api: analyticsApiRef,
-      deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
-      factory: ({ discoveryApi, fetchApi }) =>
-        new LegacyUsageAnalyticsCollector({ discoveryApi, fetchApi }),
     }),
   ],
 });
@@ -55,7 +61,7 @@ export const UsageAnalyticsPage = usageAnalyticsPlugin.provide(
   createRoutableExtension({
     name: 'UsageAnalyticsPage',
     component: () =>
-      import('@backstage/plugin-usage-analytics').then(
+      import('./components/UsageAnalyticsPage/UsageAnalyticsPage').then(
         module => module.UsageAnalyticsPage,
       ),
     mountPoint: rootRouteRef,

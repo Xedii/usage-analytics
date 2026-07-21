@@ -39,7 +39,11 @@ describe('UsageAnalyticsCollector', () => {
     collector.captureEvent({
       action: 'navigate',
       subject: '/catalog?token=secret',
-      context: { pluginId: 'catalog', extensionId: 'CatalogPage' },
+      context: {
+        pluginId: 'catalog',
+        routeRef: 'catalog-index',
+        extension: 'CatalogPage',
+      },
     });
     await jest.advanceTimersByTimeAsync(5_000);
 
@@ -60,6 +64,7 @@ describe('UsageAnalyticsCollector', () => {
               expect.objectContaining({
                 action: 'navigate',
                 pluginId: 'catalog',
+                extensionId: 'CatalogPage',
               }),
             ],
           }),
@@ -91,7 +96,11 @@ describe('UsageAnalyticsCollector', () => {
     collector.captureEvent({
       action: 'click',
       subject: 'secret form value',
-      context: { pluginId: 'catalog', extensionId: 'CreateButton' },
+      context: {
+        pluginId: 'catalog',
+        routeRef: 'catalog-index',
+        extension: 'CreateButton',
+      },
     });
     await jest.advanceTimersByTimeAsync(5_000);
 
@@ -139,6 +148,44 @@ describe('UsageAnalyticsCollector', () => {
     ]);
     collector.shutdown();
   });
+
+  it('limits the event queue to 1,000 entries', async () => {
+    let resolveFirstEventRequest: (response: {
+      ok: boolean;
+      status: number;
+    }) => void = () => {};
+    let eventRequestCount = 0;
+    const fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/v1/events') && eventRequestCount++ === 0) {
+        return new Promise(resolve => {
+          resolveFirstEventRequest = resolve;
+        });
+      }
+      return Promise.resolve({ ok: true, status: 204 });
+    });
+    const collector = createCollector(fetch);
+
+    for (let index = 0; index < 1_021; index++) {
+      collector.captureEvent({
+        action: 'click',
+        subject: 'button',
+        context: createEvent().context,
+        value: index,
+      });
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+    resolveFirstEventRequest({ ok: true, status: 204 });
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    const events = eventRequests(fetch).flatMap(
+      call => JSON.parse(call[1].body).events,
+    );
+    expect(events).toHaveLength(1_020);
+    expect(events.map(event => event.value)).not.toContain(20);
+    expect(events.at(-1).value).toBe(1_020);
+    collector.shutdown();
+  });
 });
 
 function createCollector(fetch: jest.Mock) {
@@ -152,7 +199,11 @@ function createEvent() {
   return {
     action: 'navigate',
     subject: '/catalog',
-    context: { pluginId: 'catalog', extensionId: 'CatalogPage' },
+    context: {
+      pluginId: 'catalog',
+      routeRef: 'catalog-index',
+      extension: 'CatalogPage',
+    },
   };
 }
 

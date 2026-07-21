@@ -14,7 +14,6 @@
     "pluginId": "usage-analytics",
     "pluginPackages": [
       "@backstage/plugin-usage-analytics",
-      "@backstage/plugin-usage-analytics-legacy",
       "@backstage/plugin-usage-analytics-backend",
       "@backstage/plugin-usage-analytics-common"
     ]
@@ -31,9 +30,8 @@
   },
   "dependencies": {
     "@backstage/core-components": "workspace:^",
+    "@backstage/core-plugin-api": "workspace:^",
     "@backstage/errors": "workspace:^",
-    "@backstage/frontend-plugin-api": "workspace:^",
-    "@backstage/plugin-app-react": "workspace:^",
     "@backstage/plugin-permission-react": "workspace:^",
     "@backstage/plugin-usage-analytics-common": "workspace:^",
     "@material-ui/core": "^4.12.2",
@@ -52,7 +50,7 @@
   },
   "devDependencies": {
     "@backstage/cli": "workspace:^",
-    "@backstage/frontend-dev-utils": "workspace:^",
+    "@backstage/dev-utils": "workspace:^",
     "@backstage/test-utils": "workspace:^",
     "@testing-library/react": "^16.0.0",
     "@types/react": "^18.0.0",

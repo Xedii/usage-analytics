@@ -23,7 +23,7 @@ import {
   ResponseErrorPanel,
   Table,
 } from '@backstage/core-components';
-import { useApi } from '@backstage/frontend-plugin-api';
+import { useApi } from '@backstage/core-plugin-api';
 import { Button } from '@material-ui/core';
 import {
   usageAnalyticsReadAggregatesPermission,
@@ -60,7 +60,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
  *
  * @public
  */
-export function UsageAnalyticsPage() {
+export function UsageAnalyticsPageContent() {
   const [selectedTab, setSelectedTab] = useState(0);
   const [filters, setFilters] = useState<FilterValues>({
     from: '',
@@ -353,13 +353,13 @@ function formatDateTime(value: string) {
 }
 
 /** @public */
-export function UsageAnalyticsPageWithPermission() {
+export const UsageAnalyticsPage = () => {
   return (
     <RequirePermission permission={usageAnalyticsReadAggregatesPermission}>
-      <UsageAnalyticsPage />
+      <UsageAnalyticsPageContent />
     </RequirePermission>
   );
-}
+};
 
 type FilterValues = Record<
   'from' | 'to' | 'userEntityRef' | 'path' | 'pluginId' | 'action',

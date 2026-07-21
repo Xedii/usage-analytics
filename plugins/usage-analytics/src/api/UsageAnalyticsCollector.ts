@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 import {
+  AnalyticsApi,
   AnalyticsEvent,
-  AnalyticsImplementation,
   DiscoveryApi,
   FetchApi,
-} from '@backstage/frontend-plugin-api';
+} from '@backstage/core-plugin-api';
 import { RecordUsageEventsRequest } from '@backstage/plugin-usage-analytics-common';
 
 const FLUSH_DELAY_MS = 5_000;
@@ -38,7 +38,7 @@ type PendingBatch = {
 };
 
 /** @public */
-export class UsageAnalyticsCollector implements AnalyticsImplementation {
+export class UsageAnalyticsCollector implements AnalyticsApi {
   private readonly sessionId: string;
   private readonly queue: RecordUsageEventsRequest['events'] = [];
   private previousPath: string | undefined;
@@ -66,7 +66,7 @@ export class UsageAnalyticsCollector implements AnalyticsImplementation {
 
   captureEvent(event: AnalyticsEvent): void {
     const currentPath = this.browserPath();
-    const { pluginId, extensionId } = event.context;
+    const { pluginId, extension } = event.context;
     const value =
       event.action === 'navigate'
         ? Math.min(1_800, (Date.now() - this.previousNavigationAt) / 1_000)
@@ -78,7 +78,7 @@ export class UsageAnalyticsCollector implements AnalyticsImplementation {
       subject: event.action === 'navigate' ? event.subject : undefined,
       value,
       pluginId,
-      extensionId,
+      extensionId: extension,
       currentPath,
       previousPath: this.previousPath,
     });
