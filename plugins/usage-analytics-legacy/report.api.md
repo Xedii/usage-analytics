@@ -5,12 +5,9 @@
 ```ts
 import { AnalyticsApi } from '@backstage/core-plugin-api';
 import { AnalyticsEvent } from '@backstage/core-plugin-api';
-import { ApiFactory } from '@backstage/frontend-plugin-api';
 import { BackstagePlugin } from '@backstage/core-plugin-api';
 import { DiscoveryApi } from '@backstage/core-plugin-api';
-import { DiscoveryApi as DiscoveryApi_2 } from '@backstage/frontend-plugin-api';
 import { FetchApi } from '@backstage/core-plugin-api';
-import { FetchApi as FetchApi_2 } from '@backstage/frontend-plugin-api';
 import { RouteRef } from '@backstage/core-plugin-api';
 import { UsageAnalyticsPage as UsageAnalyticsPage_2 } from '@backstage/plugin-usage-analytics';
 
@@ -22,16 +19,6 @@ export class LegacyUsageAnalyticsCollector implements AnalyticsApi {
   // (undocumented)
   shutdown(): void;
 }
-
-// @public (undocumented)
-export const usageAnalyticsCollectorApi: ApiFactory<
-  AnalyticsApi,
-  LegacyUsageAnalyticsCollector,
-  {
-    discoveryApi: DiscoveryApi_2;
-    fetchApi: FetchApi_2;
-  }
->;
 
 // @public (undocumented)
 export const UsageAnalyticsPage: UsageAnalyticsPage_2;

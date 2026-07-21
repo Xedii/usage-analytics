@@ -34,6 +34,7 @@ import {
   UsageReportOptions,
 } from './UsageAnalyticsApi';
 
+/** @public */
 export class UsageAnalyticsClient implements UsageAnalyticsApi {
   constructor(
     private readonly discoveryApi: DiscoveryApi,

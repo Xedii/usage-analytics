@@ -33,4 +33,6 @@ export {
   type UsageReportFilters,
   type UsageReportOptions,
 } from './api/UsageAnalyticsApi';
+export { UsageAnalyticsClient } from './api/UsageAnalyticsClient';
+export { UsageAnalyticsCollector } from './api/UsageAnalyticsCollector';
 export { UsageAnalyticsPageWithPermission as UsageAnalyticsPage } from './components/UsageAnalyticsPage/UsageAnalyticsPage';

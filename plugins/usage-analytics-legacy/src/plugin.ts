@@ -29,14 +29,6 @@ import { LegacyUsageAnalyticsCollector } from './LegacyUsageAnalyticsCollector';
 import { rootRouteRef } from './routes';
 
 /** @public */
-export const usageAnalyticsCollectorApi = createApiFactory({
-  api: analyticsApiRef,
-  deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
-  factory: ({ discoveryApi, fetchApi }) =>
-    new LegacyUsageAnalyticsCollector({ discoveryApi, fetchApi }),
-});
-
-/** @public */
 export const usageAnalyticsPlugin = createPlugin({
   id: 'usage-analytics',
   routes: {
@@ -48,6 +40,12 @@ export const usageAnalyticsPlugin = createPlugin({
       deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
       factory: ({ discoveryApi, fetchApi }) =>
         new UsageAnalyticsClient(discoveryApi, fetchApi),
+    }),
+    createApiFactory({
+      api: analyticsApiRef,
+      deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
+      factory: ({ discoveryApi, fetchApi }) =>
+        new LegacyUsageAnalyticsCollector({ discoveryApi, fetchApi }),
     }),
   ],
 });

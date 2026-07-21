@@ -14,6 +14,7 @@
     "pluginId": "usage-analytics",
     "pluginPackages": [
       "@backstage/plugin-usage-analytics",
+      "@backstage/plugin-usage-analytics-legacy",
       "@backstage/plugin-usage-analytics-backend",
       "@backstage/plugin-usage-analytics-common"
     ]

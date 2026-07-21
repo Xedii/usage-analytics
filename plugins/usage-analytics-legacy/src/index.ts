@@ -21,9 +21,5 @@
  */
 
 export { usageAnalyticsPlugin as default } from './plugin';
-export {
-  UsageAnalyticsPage,
-  usageAnalyticsCollectorApi,
-  usageAnalyticsPlugin,
-} from './plugin';
+export { UsageAnalyticsPage, usageAnalyticsPlugin } from './plugin';
 export { LegacyUsageAnalyticsCollector } from './LegacyUsageAnalyticsCollector';

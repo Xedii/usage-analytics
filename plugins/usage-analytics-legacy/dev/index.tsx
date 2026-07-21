@@ -14,15 +14,10 @@
  * limitations under the License.
  */
 import { createDevApp } from '@backstage/dev-utils';
-import {
-  UsageAnalyticsPage,
-  usageAnalyticsCollectorApi,
-  usageAnalyticsPlugin,
-} from '../src';
+import { UsageAnalyticsPage, usageAnalyticsPlugin } from '../src';
 
 createDevApp()
   .registerPlugin(usageAnalyticsPlugin)
-  .registerApi(usageAnalyticsCollectorApi)
   .addPage({
     title: 'Usage analytics',
     element: <UsageAnalyticsPage />,

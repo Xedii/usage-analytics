@@ -15,6 +15,9 @@ const app = createApp({
 });
 ```
 
+Apps using the legacy frontend system should install
+`@backstage/plugin-usage-analytics-legacy` instead.
+
 The plugin buffers analytics events in the browser and sends presence
 heartbeats independently. User identity is never accepted from the browser; it
 is resolved by the backend from Backstage credentials.

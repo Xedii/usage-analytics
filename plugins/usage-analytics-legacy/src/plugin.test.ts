@@ -15,11 +15,7 @@
  */
 import { analyticsApiRef } from '@backstage/core-plugin-api';
 import { usageAnalyticsApiRef } from '@backstage/plugin-usage-analytics';
-import {
-  UsageAnalyticsPage,
-  usageAnalyticsCollectorApi,
-  usageAnalyticsPlugin,
-} from './plugin';
+import { UsageAnalyticsPage, usageAnalyticsPlugin } from './plugin';
 
 describe('usage-analytics-legacy', () => {
   it('registers the legacy plugin, page, and APIs', () => {
@@ -27,8 +23,7 @@ describe('usage-analytics-legacy', () => {
     expect(usageAnalyticsPlugin.routes.root).toBeDefined();
     expect(
       [...usageAnalyticsPlugin.getApis()].map(factory => factory.api),
-    ).toEqual([usageAnalyticsApiRef]);
-    expect(usageAnalyticsCollectorApi.api).toBe(analyticsApiRef);
+    ).toEqual(expect.arrayContaining([usageAnalyticsApiRef, analyticsApiRef]));
     expect(UsageAnalyticsPage).toBeDefined();
   });
 });

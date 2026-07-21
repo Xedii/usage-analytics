@@ -37,6 +37,7 @@ type PendingBatch = {
   retryAttempts: number;
 };
 
+/** @public */
 export class UsageAnalyticsCollector implements AnalyticsImplementation {
   private readonly sessionId: string;
   private readonly queue: RecordUsageEventsRequest['events'] = [];
