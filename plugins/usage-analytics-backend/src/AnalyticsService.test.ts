@@ -15,23 +15,13 @@
  */
 import { mockServices } from '@backstage/backend-test-utils';
 import { AnalyticsService } from './AnalyticsService';
-import { AnalyticsStore } from './types';
+import { DatabaseAnalyticsStore } from './DatabaseAnalyticsStore';
 
-const createStore = (): jest.Mocked<AnalyticsStore> => ({
+const createStore = (): jest.Mocked<
+  Pick<DatabaseAnalyticsStore, 'recordEvents' | 'updatePresence'>
+> => ({
   recordEvents: jest.fn(),
   updatePresence: jest.fn(),
-  getOverview: jest.fn(),
-  getTimeseries: jest.fn(),
-  getPages: jest.fn(),
-  getPlugins: jest.fn(),
-  getUsers: jest.fn(),
-  getActivity: jest.fn(),
-  getSessions: jest.fn(),
-  getSession: jest.fn(),
-  getEventTypes: jest.fn(),
-  getPresenceSummary: jest.fn(),
-  getOnlineUsers: jest.fn(),
-  deleteExpiredData: jest.fn(),
 });
 
 describe('AnalyticsService', () => {
@@ -99,5 +89,95 @@ describe('AnalyticsService', () => {
       service.parseRange('2026-01-02T00:00:00Z', '2026-01-01T00:00:00Z'),
     ).toThrow('from must be before to');
     expect(() => service.parsePaging('101', '0')).toThrow('Invalid pagination');
+    expect(() =>
+      service.parsePaging('25', '0', 'unknown', 'asc', ['pageViews']),
+    ).toThrow('Invalid sorting');
+    expect(() =>
+      service.parsePaging('25', '0', 'pageViews', 'sideways', ['pageViews']),
+    ).toThrow('Invalid sorting');
+    expect(
+      service.parsePaging('25', '50', 'pageViews', 'asc', ['pageViews']),
+    ).toEqual({
+      limit: 25,
+      offset: 50,
+      orderField: 'pageViews',
+      orderDirection: 'asc',
+    });
   });
+
+  it('rejects retention settings that could delete current data', () => {
+    expect(
+      () =>
+        new AnalyticsService({
+          store: createStore(),
+          config: mockServices.rootConfig({
+            data: {
+              usageAnalytics: { retention: { eventsDays: -1 } },
+            },
+          }),
+        }),
+    ).toThrow('usageAnalytics.retention.eventsDays must be a positive number');
+  });
+
+  it('resolves export resource defaults and valid overrides', () => {
+    const defaultService = new AnalyticsService({
+      store: createStore(),
+      config: mockServices.rootConfig(),
+    });
+    expect(defaultService.exportSettings).toEqual({
+      maxConcurrent: 2,
+      timeoutSeconds: 300,
+    });
+
+    const configuredService = new AnalyticsService({
+      store: createStore(),
+      config: mockServices.rootConfig({
+        data: {
+          usageAnalytics: {
+            export: { maxConcurrent: 4, timeoutSeconds: 600 },
+          },
+        },
+      }),
+    });
+    expect(configuredService.exportSettings).toEqual({
+      maxConcurrent: 4,
+      timeoutSeconds: 600,
+    });
+  });
+
+  it.each([0, -1, 1.5, Number.POSITIVE_INFINITY])(
+    'rejects invalid export resource setting %p',
+    value => {
+      expect(
+        () =>
+          new AnalyticsService({
+            store: createStore(),
+            config: mockServices.rootConfig({
+              data: {
+                usageAnalytics: {
+                  export: { maxConcurrent: value },
+                },
+              },
+            }),
+          }),
+      ).toThrow(
+        'usageAnalytics.export.maxConcurrent must be a positive integer',
+      );
+      expect(
+        () =>
+          new AnalyticsService({
+            store: createStore(),
+            config: mockServices.rootConfig({
+              data: {
+                usageAnalytics: {
+                  export: { timeoutSeconds: value },
+                },
+              },
+            }),
+          }),
+      ).toThrow(
+        'usageAnalytics.export.timeoutSeconds must be a positive integer',
+      );
+    },
+  );
 });

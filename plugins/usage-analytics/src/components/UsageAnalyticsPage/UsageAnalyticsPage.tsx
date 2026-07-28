@@ -33,25 +33,22 @@ import {
   TextField,
   Typography,
 } from '@material-ui/core';
-import { fade, makeStyles, useTheme } from '@material-ui/core/styles';
-import AccessTimeOutlinedIcon from '@material-ui/icons/AccessTimeOutlined';
-import AssessmentOutlinedIcon from '@material-ui/icons/AssessmentOutlined';
-import ClearAllOutlinedIcon from '@material-ui/icons/ClearAllOutlined';
-import FiberManualRecordIcon from '@material-ui/icons/FiberManualRecord';
-import FilterListIcon from '@material-ui/icons/FilterList';
-import PeopleAltOutlinedIcon from '@material-ui/icons/PeopleAltOutlined';
-import PersonOutlineIcon from '@material-ui/icons/PersonOutline';
-import VisibilityOutlinedIcon from '@material-ui/icons/VisibilityOutlined';
+import { makeStyles } from '@material-ui/core/styles';
 import {
+  UsageSessionSummary,
   usageAnalyticsReadAggregatesPermission,
   usageAnalyticsReadDetailsPermission,
 } from '@backstage/plugin-usage-analytics-common';
-import { RequirePermission } from '@backstage/plugin-permission-react';
-import { ReactNode, useMemo, useState } from 'react';
+import {
+  RequirePermission,
+  usePermission,
+} from '@backstage/plugin-permission-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import useAsync from 'react-use/lib/useAsync';
 import useAsyncRetry from 'react-use/lib/useAsyncRetry';
 import useInterval from 'react-use/lib/useInterval';
 import {
+  UsageExportOptions,
   UsageReportFilters,
   usageAnalyticsApiRef,
 } from '../../api/UsageAnalyticsApi';
@@ -70,11 +67,25 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
+const numberFormatter = new Intl.NumberFormat();
+const tableOptions = {
+  paging: false,
+  search: false,
+  toolbar: false,
+  padding: 'dense',
+} as const;
 
-type FilterValues = Record<
-  'from' | 'to' | 'userEntityRef' | 'path' | 'pluginId' | 'action',
-  string
->;
+const filterFields = [
+  { name: 'from', label: 'From', type: 'date' },
+  { name: 'to', label: 'To', type: 'date' },
+  { name: 'userEntityRef', label: 'User', type: 'text' },
+  { name: 'path', label: 'Path', type: 'text' },
+  { name: 'pluginId', label: 'Plugin', type: 'text' },
+  { name: 'action', label: 'Action', type: 'text' },
+] as const;
+
+type FilterName = (typeof filterFields)[number]['name'];
+type FilterValues = Record<FilterName, string>;
 
 const emptyFilters: FilterValues = {
   from: '',
@@ -85,19 +96,7 @@ const emptyFilters: FilterValues = {
   action: '',
 };
 
-const filterLabels: Record<keyof FilterValues, string> = {
-  from: 'From',
-  to: 'To',
-  userEntityRef: 'User',
-  path: 'Path',
-  pluginId: 'Plugin',
-  action: 'Action',
-};
-
 const usePageStyles = makeStyles(theme => ({
-  metrics: {
-    marginBottom: theme.spacing(3),
-  },
   emptyState: {
     display: 'flex',
     flexDirection: 'column',
@@ -121,10 +120,10 @@ const usePageStyles = makeStyles(theme => ({
  * @public
  */
 export function UsageAnalyticsPageContent() {
-  const classes = usePageStyles();
   const [selectedTab, setSelectedTab] = useState(0);
   const [filters, setFilters] = useState<FilterValues>(emptyFilters);
   const options = useMemo(() => filterOptions(filters), [filters]);
+  const filterKey = JSON.stringify(options);
   return (
     <Page themeId="tool">
       <Header
@@ -137,19 +136,23 @@ export function UsageAnalyticsPageContent() {
         onChange={setSelectedTab}
       />
       <Content>
-        <Box className={classes.metrics}>
-          <FilterBar values={filters} onChange={setFilters} />
+        <Box mb={3}>
+          <FilterBar values={filters} filters={options} onChange={setFilters} />
         </Box>
-        {selectedTab === 0 && <OverviewContent filters={options} />}
-        {selectedTab === 1 && <PagesContent filters={options} />}
+        {selectedTab === 0 && (
+          <OverviewContent key={filterKey} filters={options} />
+        )}
+        {selectedTab === 1 && (
+          <PagesContent key={filterKey} filters={options} />
+        )}
         {selectedTab === 2 && (
           <RequirePermission permission={usageAnalyticsReadDetailsPermission}>
-            <UsersContent filters={options} />
+            <UsersContent key={filterKey} filters={options} />
           </RequirePermission>
         )}
         {selectedTab === 3 && (
           <RequirePermission permission={usageAnalyticsReadDetailsPermission}>
-            <SessionsContent filters={options} />
+            <SessionsContent key={filterKey} filters={options} />
           </RequirePermission>
         )}
       </Content>
@@ -170,7 +173,7 @@ function OverviewContent({ filters }: { filters: UsageReportFilters }) {
     [api, filters],
   );
   const presence = useAsyncRetry(() => api.getPresenceSummary(), [api]);
-  useInterval(presence.retry, 30_000);
+  useInterval(presence.retry, presence.loading ? null : 30_000);
   if (reports.loading || (presence.loading && !presence.value)) {
     return <Progress />;
   }
@@ -180,74 +183,78 @@ function OverviewContent({ filters }: { filters: UsageReportFilters }) {
   const [overview, timeseries, eventTypes, plugins] = reports.value!;
   return (
     <>
-      <MetricCards
-        metrics={[
-          {
-            label: 'Events',
-            value: overview.eventCount,
-            icon: <AssessmentOutlinedIcon />,
-            color: 'primary',
-          },
-          {
-            label: 'Active users',
-            value: overview.activeUsers,
-            icon: <PeopleAltOutlinedIcon />,
-            color: 'success',
-          },
-          {
-            label: 'Sessions',
-            value: overview.sessions,
-            icon: <AccessTimeOutlinedIcon />,
-            color: 'warning',
-          },
-          {
-            label: 'Page views',
-            value: overview.pageViews,
-            icon: <VisibilityOutlinedIcon />,
-            color: 'info',
-          },
-          {
-            label: 'Online now',
-            value: presence.value!.onlineUsers,
-            icon: <FiberManualRecordIcon />,
-            color: 'error',
-          },
-        ]}
-      />
+      <Box mb={3}>
+        <Grid container spacing={3}>
+          {[
+            ['Events', overview.eventCount],
+            ['Active users', overview.activeUsers],
+            ['Sessions', overview.sessions],
+            ['Page views', overview.pageViews],
+            ['Online now', presence.value!.onlineUsers],
+          ].map(([label, value]) => (
+            <Grid item key={label} xs={6} sm={4} md>
+              <InfoCard title={String(label)}>
+                <Typography variant="h4">
+                  {numberFormatter.format(Number(value))}
+                </Typography>
+              </InfoCard>
+            </Grid>
+          ))}
+        </Grid>
+      </Box>
       <Grid container spacing={3}>
         <Grid item xs={12} lg={6}>
           <InfoCard title="Daily activity" noPadding>
-            <DataTable
-              headers={['Day', 'Events', 'Users', 'Sessions']}
-              rows={timeseries.buckets.map(bucket => [
-                formatDate(bucket.start),
-                bucket.eventCount.toLocaleString(),
-                bucket.activeUsers.toLocaleString(),
-                bucket.sessions.toLocaleString(),
-              ])}
+            <Table
+              columns={[
+                {
+                  title: 'Day',
+                  field: 'start',
+                  render: bucket => formatDate(bucket.start),
+                },
+                { title: 'Events', field: 'eventCount', type: 'numeric' },
+                { title: 'Users', field: 'activeUsers', type: 'numeric' },
+                { title: 'Sessions', field: 'sessions', type: 'numeric' },
+              ]}
+              data={timeseries.buckets}
+              options={tableOptions}
             />
           </InfoCard>
         </Grid>
         <Grid item xs={12} md={6} lg={3}>
           <InfoCard title="Event types" noPadding>
-            <DataTable
-              headers={['Action', 'Events']}
-              rows={eventTypes.items.map(item => [
-                <Chip label={item.action} size="small" variant="outlined" />,
-                item.count.toLocaleString(),
-              ])}
+            <Table
+              columns={[
+                {
+                  title: 'Action',
+                  field: 'action',
+                  render: item => (
+                    <Chip label={item.action} size="small" variant="outlined" />
+                  ),
+                },
+                { title: 'Events', field: 'count', type: 'numeric' },
+              ]}
+              data={eventTypes.items}
+              options={tableOptions}
             />
           </InfoCard>
         </Grid>
         <Grid item xs={12} md={6} lg={3}>
           <InfoCard title="Popular plugins" noPadding>
-            <DataTable
-              headers={['Plugin', 'Events', 'Users']}
-              rows={plugins.items.map(plugin => [
-                <Chip label={plugin.pluginId} size="small" />,
-                plugin.events.toLocaleString(),
-                plugin.uniqueUsers.toLocaleString(),
-              ])}
+            <Table
+              columns={[
+                {
+                  title: 'Plugin',
+                  field: 'pluginId',
+                  render: plugin => (
+                    <Chip label={plugin.pluginId} size="small" />
+                  ),
+                },
+                { title: 'Events', field: 'events', type: 'numeric' },
+                { title: 'Users', field: 'uniqueUsers', type: 'numeric' },
+              ]}
+              data={plugins.items}
+              options={{ ...tableOptions, sorting: false }}
             />
           </InfoCard>
         </Grid>
@@ -258,25 +265,43 @@ function OverviewContent({ filters }: { filters: UsageReportFilters }) {
 
 function PagesContent({ filters }: { filters: UsageReportFilters }) {
   const api = useApi(usageAnalyticsApiRef);
+  const pagination = usePagination();
   const state = useAsync(
-    () => api.getPages({ ...filters, limit: 100 }),
-    [api, filters],
+    () => api.getPages({ ...filters, ...pagination.request }),
+    [api, filters, pagination.request],
   );
+  usePaginationBounds(pagination, state.value?.total);
   if (state.loading) return <Progress />;
   if (state.error) return <ResponseErrorPanel error={state.error} />;
   return (
     <InfoCard title={`Pages (${state.value!.total})`} noPadding>
-      <DataTable
-        headers={['Path', 'Views', 'Users', 'Estimated time', 'Last viewed']}
-        rows={state.value!.items.map(page => [
-          <Typography variant="body2" component="code">
-            {page.path}
-          </Typography>,
-          page.pageViews.toLocaleString(),
-          page.uniqueUsers.toLocaleString(),
-          formatDuration(page.estimatedDurationSeconds),
-          formatDateTime(page.lastViewedAt),
-        ])}
+      <Table
+        columns={[
+          {
+            title: 'Path',
+            field: 'path',
+            render: page => (
+              <Typography variant="body2" component="code">
+                {page.path}
+              </Typography>
+            ),
+          },
+          { title: 'Views', field: 'pageViews', type: 'numeric' },
+          { title: 'Users', field: 'uniqueUsers', type: 'numeric' },
+          {
+            title: 'Estimated time',
+            field: 'estimatedDurationSeconds',
+            render: page => formatDuration(page.estimatedDurationSeconds),
+          },
+          {
+            title: 'Last viewed',
+            field: 'lastViewedAt',
+            render: page => formatDateTime(page.lastViewedAt),
+          },
+        ]}
+        data={state.value!.items}
+        options={pagination.options}
+        {...pagination.tableProps(state.value!.total)}
       />
     </InfoCard>
   );
@@ -286,19 +311,34 @@ function UsersContent({ filters }: { filters: UsageReportFilters }) {
   const classes = usePageStyles();
   const api = useApi(usageAnalyticsApiRef);
   const [userEntityRef, setUserEntityRef] = useState<string>();
+  const usersPagination = usePagination();
+  const historyPagination = usePagination();
+  const onlinePagination = usePagination();
   const users = useAsync(
-    () => api.getUsers({ ...filters, limit: 100 }),
-    [api, filters],
+    () => api.getUsers({ ...filters, ...usersPagination.request }),
+    [api, filters, usersPagination.request],
   );
   const history = useAsync(
     () =>
       userEntityRef
-        ? api.getActivity({ ...filters, userEntityRef, limit: 100 })
+        ? api.getActivity({
+            ...filters,
+            userEntityRef,
+            ...historyPagination.request,
+            orderField: 'occurredAt',
+            orderDirection: 'asc',
+          })
         : Promise.resolve(undefined),
-    [api, filters, userEntityRef],
+    [api, filters, historyPagination.request, userEntityRef],
   );
-  const online = useAsyncRetry(() => api.getOnlineUsers({ limit: 100 }), [api]);
-  useInterval(online.retry, 30_000);
+  const online = useAsyncRetry(
+    () => api.getOnlineUsers(onlinePagination.request),
+    [api, onlinePagination.request],
+  );
+  usePaginationBounds(usersPagination, users.value?.total);
+  usePaginationBounds(historyPagination, history.value?.total);
+  usePaginationBounds(onlinePagination, online.value?.total);
+  useInterval(online.retry, online.loading ? null : 30_000);
   if (users.loading || (online.loading && !online.value)) return <Progress />;
   if (users.error || online.error) {
     return <ResponseErrorPanel error={(users.error ?? online.error)!} />;
@@ -307,38 +347,66 @@ function UsersContent({ filters }: { filters: UsageReportFilters }) {
     <Grid container spacing={3}>
       <Grid item xs={12} lg={6}>
         <InfoCard title={`Users (${users.value!.total})`} noPadding>
-          <DataTable
-            headers={['User', 'Events', 'Sessions', 'Last seen']}
-            rows={users.value!.items.map(user => [
-              <Button
-                size="small"
-                color="primary"
-                startIcon={<PersonOutlineIcon />}
-                onClick={() => setUserEntityRef(user.userEntityRef)}
-              >
-                {user.userEntityRef}
-              </Button>,
-              user.eventCount.toLocaleString(),
-              user.sessionCount.toLocaleString(),
-              formatDateTime(user.lastSeenAt),
-            ])}
+          <Table
+            columns={[
+              {
+                title: 'User',
+                field: 'userEntityRef',
+                render: user => (
+                  <Button
+                    size="small"
+                    color="primary"
+                    onClick={() => {
+                      historyPagination.reset();
+                      setUserEntityRef(user.userEntityRef);
+                    }}
+                  >
+                    {user.userEntityRef}
+                  </Button>
+                ),
+              },
+              { title: 'Events', field: 'eventCount', type: 'numeric' },
+              { title: 'Sessions', field: 'sessionCount', type: 'numeric' },
+              {
+                title: 'Last seen',
+                field: 'lastSeenAt',
+                render: user => formatDateTime(user.lastSeenAt),
+              },
+            ]}
+            data={users.value!.items}
+            options={usersPagination.options}
+            {...usersPagination.tableProps(users.value!.total)}
           />
         </InfoCard>
       </Grid>
       <Grid item xs={12} lg={6}>
         <InfoCard title={`Online users (${online.value!.total})`} noPadding>
-          <DataTable
-            headers={['User', 'Sessions', 'Path', 'Last heartbeat']}
-            rows={online.value!.items.map(user => [
-              <Typography variant="body2" component="span">
-                <OnlineIndicator /> {user.userEntityRef}
-              </Typography>,
-              user.activeSessionCount,
-              <Typography variant="body2" component="code">
-                {user.currentPath}
-              </Typography>,
-              formatDateTime(user.lastSeenAt),
-            ])}
+          <Table
+            columns={[
+              { title: 'User', field: 'userEntityRef' },
+              {
+                title: 'Sessions',
+                field: 'activeSessionCount',
+                type: 'numeric',
+              },
+              {
+                title: 'Path',
+                field: 'currentPath',
+                render: user => (
+                  <Typography variant="body2" component="code">
+                    {user.currentPath}
+                  </Typography>
+                ),
+              },
+              {
+                title: 'Last heartbeat',
+                field: 'lastSeenAt',
+                render: user => formatDateTime(user.lastSeenAt),
+              },
+            ]}
+            data={online.value!.items}
+            options={onlinePagination.options}
+            {...onlinePagination.tableProps(online.value!.total)}
           />
         </InfoCard>
       </Grid>
@@ -349,7 +417,6 @@ function UsersContent({ filters }: { filters: UsageReportFilters }) {
         >
           {!userEntityRef && (
             <div className={classes.emptyState}>
-              <PersonOutlineIcon fontSize="large" />
               <Typography variant="body1">
                 Select a user to see their recent activity.
               </Typography>
@@ -358,16 +425,38 @@ function UsersContent({ filters }: { filters: UsageReportFilters }) {
           {history.loading && userEntityRef && <Progress />}
           {history.error && <ResponseErrorPanel error={history.error} />}
           {history.value && (
-            <DataTable
-              headers={['Time', 'Action', 'Path', 'Plugin']}
-              rows={[...history.value.items].reverse().map(event => [
-                formatDateTime(event.occurredAt),
-                <Chip label={event.action} size="small" variant="outlined" />,
-                <Typography variant="body2" component="code">
-                  {event.currentPath}
-                </Typography>,
-                event.pluginId ?? '',
-              ])}
+            <Table
+              columns={[
+                {
+                  title: 'Time',
+                  field: 'occurredAt',
+                  render: event => formatDateTime(event.occurredAt),
+                },
+                {
+                  title: 'Action',
+                  field: 'action',
+                  render: event => (
+                    <Chip
+                      label={event.action}
+                      size="small"
+                      variant="outlined"
+                    />
+                  ),
+                },
+                {
+                  title: 'Path',
+                  field: 'currentPath',
+                  render: event => (
+                    <Typography variant="body2" component="code">
+                      {event.currentPath}
+                    </Typography>
+                  ),
+                },
+                { title: 'Plugin', field: 'pluginId' },
+              ]}
+              data={history.value.items}
+              options={historyPagination.options}
+              {...historyPagination.tableProps(history.value.total)}
             />
           )}
         </InfoCard>
@@ -379,15 +468,28 @@ function UsersContent({ filters }: { filters: UsageReportFilters }) {
 function SessionsContent({ filters }: { filters: UsageReportFilters }) {
   const classes = usePageStyles();
   const api = useApi(usageAnalyticsApiRef);
+  const sessionsPagination = usePagination();
   const sessions = useAsync(
-    () => api.getSessions({ ...filters, limit: 100 }),
-    [api, filters],
+    () => api.getSessions({ ...filters, ...sessionsPagination.request }),
+    [api, filters, sessionsPagination.request],
   );
-  const [sessionId, setSessionId] = useState<string>();
-  const selected = useAsync(
-    () => (sessionId ? api.getSession(sessionId) : Promise.resolve(undefined)),
-    [api, sessionId],
+  const timelinePagination = usePagination();
+  const [selectedSession, setSelectedSession] = useState<UsageSessionSummary>();
+  const timeline = useAsync(
+    () =>
+      selectedSession
+        ? api.getActivity({
+            ...filters,
+            ...timelinePagination.request,
+            orderField: 'occurredAt',
+            orderDirection: 'asc',
+            sessionId: selectedSession.sessionId,
+          })
+        : Promise.resolve(undefined),
+    [api, filters, selectedSession, timelinePagination.request],
   );
+  usePaginationBounds(sessionsPagination, sessions.value?.total);
+  usePaginationBounds(timelinePagination, timeline.value?.total);
   if (sessions.loading) return <Progress />;
   if (sessions.error) return <ResponseErrorPanel error={sessions.error} />;
 
@@ -395,64 +497,94 @@ function SessionsContent({ filters }: { filters: UsageReportFilters }) {
     <Grid container spacing={3}>
       <Grid item xs={12} lg={5}>
         <InfoCard title="Recent sessions" noPadding>
-          <DataTable
-            headers={['Session', 'User', 'Last activity']}
-            rows={sessions.value!.items.map(item => [
-              <Button
-                size="small"
-                color="primary"
-                startIcon={<AccessTimeOutlinedIcon />}
-                onClick={() => setSessionId(item.sessionId)}
-              >
-                {item.sessionId}
-              </Button>,
-              item.userEntityRef,
-              formatDateTime(item.lastSeenAt),
-            ])}
+          <Table
+            columns={[
+              {
+                title: 'Session',
+                field: 'sessionId',
+                render: item => (
+                  <Button
+                    size="small"
+                    color="primary"
+                    onClick={() => {
+                      timelinePagination.reset();
+                      setSelectedSession(item);
+                    }}
+                  >
+                    {item.sessionId}
+                  </Button>
+                ),
+              },
+              { title: 'User', field: 'userEntityRef' },
+              {
+                title: 'Last activity',
+                field: 'lastSeenAt',
+                render: item => formatDateTime(item.lastSeenAt),
+              },
+            ]}
+            data={sessions.value!.items}
+            options={sessionsPagination.options}
+            {...sessionsPagination.tableProps(sessions.value!.total)}
           />
         </InfoCard>
       </Grid>
       <Grid item xs={12} lg={7}>
         <InfoCard title="Session timeline" noPadding>
-          {selected.loading && sessionId && <Progress />}
-          {selected.error && <ResponseErrorPanel error={selected.error} />}
-          {!selected.value && !selected.error && !selected.loading && (
+          {timeline.loading && selectedSession && <Progress />}
+          {timeline.error && <ResponseErrorPanel error={timeline.error} />}
+          {!selectedSession && (
             <div className={classes.emptyState}>
-              <AccessTimeOutlinedIcon fontSize="large" />
               <Typography variant="body1">
                 Select a recent session to inspect its timeline.
               </Typography>
             </div>
           )}
-          {selected.value && !selected.loading && (
+          {selectedSession && timeline.value && !timeline.loading && (
             <Box p={2}>
               <div className={classes.sessionMeta}>
+                <Chip label={selectedSession.userEntityRef} size="small" />
                 <Chip
-                  icon={<PersonOutlineIcon />}
-                  label={selected.value.userEntityRef}
-                  size="small"
-                />
-                <Chip
-                  icon={<AccessTimeOutlinedIcon />}
-                  label={formatDuration(selected.value.durationSeconds)}
+                  label={formatDuration(selectedSession.durationSeconds)}
                   size="small"
                   variant="outlined"
                 />
                 <Chip
-                  label={`${selected.value.events.length} events`}
+                  label={`${timeline.value.total} events`}
                   size="small"
                   variant="outlined"
                 />
               </div>
-              <DataTable
-                headers={['Time', 'Action', 'Path']}
-                rows={selected.value.events.map(event => [
-                  formatDateTime(event.occurredAt),
-                  <Chip label={event.action} size="small" variant="outlined" />,
-                  <Typography variant="body2" component="code">
-                    {event.currentPath}
-                  </Typography>,
-                ])}
+              <Table
+                columns={[
+                  {
+                    title: 'Time',
+                    field: 'occurredAt',
+                    render: event => formatDateTime(event.occurredAt),
+                  },
+                  {
+                    title: 'Action',
+                    field: 'action',
+                    render: event => (
+                      <Chip
+                        label={event.action}
+                        size="small"
+                        variant="outlined"
+                      />
+                    ),
+                  },
+                  {
+                    title: 'Path',
+                    field: 'currentPath',
+                    render: event => (
+                      <Typography variant="body2" component="code">
+                        {event.currentPath}
+                      </Typography>
+                    ),
+                  },
+                ]}
+                data={timeline.value.items}
+                options={timelinePagination.options}
+                {...timelinePagination.tableProps(timeline.value.total)}
               />
             </Box>
           )}
@@ -462,121 +594,60 @@ function SessionsContent({ filters }: { filters: UsageReportFilters }) {
   );
 }
 
-const useMetricStyles = makeStyles(theme => ({
-  root: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: theme.spacing(2),
-    height: '100%',
-    padding: theme.spacing(2),
-    border: `1px solid ${theme.palette.divider}`,
-    borderRadius: theme.shape.borderRadius,
-    transition: theme.transitions.create(['box-shadow', 'transform'], {
-      duration: theme.transitions.duration.short,
+function usePagination(defaultPageSize = 25) {
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(defaultPageSize);
+  const request = useMemo(
+    () => ({
+      limit: pageSize,
+      offset: page * pageSize,
     }),
-    '&:hover': {
-      boxShadow: theme.shadows[4],
-      transform: 'translateY(-2px)',
-    },
-  },
-  badge: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 48,
-    height: 48,
-    flexShrink: 0,
-    borderRadius: theme.shape.borderRadius,
-  },
-  value: {
-    fontSize: '1.75rem',
-    fontWeight: 700,
-    lineHeight: 1.2,
-  },
-  label: {
-    color: theme.palette.text.secondary,
-    fontSize: '0.75rem',
-    fontWeight: 600,
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
-  },
-}));
-
-type MetricColor = 'primary' | 'success' | 'warning' | 'info' | 'error';
-
-function MetricCards(props: {
-  metrics: {
-    label: string;
-    value: number;
-    icon: ReactNode;
-    color: MetricColor;
-  }[];
-}) {
-  return (
-    <Grid container spacing={3}>
-      {props.metrics.map(metric => (
-        <Grid item key={metric.label} xs={6} sm={4} md>
-          <MetricCard {...metric} />
-        </Grid>
-      ))}
-    </Grid>
+    [page, pageSize],
   );
+  const options = useMemo(
+    () => ({
+      ...tableOptions,
+      paging: true,
+      sorting: false,
+      pageSize,
+      pageSizeOptions: [25, 50, 100],
+      emptyRowsWhenPaging: false,
+    }),
+    [pageSize],
+  );
+  return {
+    page,
+    pageSize,
+    setPage,
+    request,
+    options,
+    reset: () => setPage(0),
+    tableProps: (totalCount: number) => ({
+      page,
+      totalCount,
+      onPageChange: setPage,
+      onRowsPerPageChange: (size: number) => {
+        setPage(0);
+        setPageSize(size);
+      },
+    }),
+  };
 }
 
-function MetricCard(props: {
-  label: string;
-  value: number;
-  icon: ReactNode;
-  color: MetricColor;
-}) {
-  const classes = useMetricStyles();
-  const theme = useTheme();
-  const color = theme.palette[props.color].main;
-  return (
-    <Paper elevation={0} className={classes.root}>
-      <div
-        className={classes.badge}
-        style={{ backgroundColor: fade(color, 0.12), color }}
-      >
-        {props.icon}
-      </div>
-      <div>
-        <div className={classes.value}>{props.value.toLocaleString()}</div>
-        <div className={classes.label}>{props.label}</div>
-      </div>
-    </Paper>
-  );
-}
-
-const useOnlineIndicatorStyles = makeStyles(theme => ({
-  dot: {
-    color: theme.palette.success.main,
-    fontSize: '0.75rem',
-    verticalAlign: 'middle',
-  },
-}));
-
-function OnlineIndicator() {
-  const classes = useOnlineIndicatorStyles();
-  return <FiberManualRecordIcon className={classes.dot} />;
-}
-
-function DataTable(props: { headers: string[]; rows: ReactNode[][] }) {
-  return (
-    <Table<ReactNode[]>
-      columns={props.headers.map((title, index) => ({
-        title,
-        render: row => row[index],
-      }))}
-      data={props.rows}
-      options={{
-        paging: false,
-        search: false,
-        toolbar: false,
-        padding: 'dense',
-      }}
-    />
-  );
+function usePaginationBounds(
+  pagination: ReturnType<typeof usePagination>,
+  totalCount: number | undefined,
+) {
+  const { page, pageSize, setPage } = pagination;
+  useEffect(() => {
+    if (totalCount === undefined) {
+      return;
+    }
+    const lastPage = Math.max(0, Math.ceil(totalCount / pageSize) - 1);
+    if (page > lastPage) {
+      setPage(lastPage);
+    }
+  }, [page, pageSize, setPage, totalCount]);
 }
 
 function formatDate(value: string) {
@@ -611,68 +682,223 @@ const useFilterStyles = makeStyles(theme => ({
     border: `1px solid ${theme.palette.divider}`,
     borderRadius: theme.shape.borderRadius,
   },
-  icon: {
-    color: theme.palette.text.secondary,
-    marginRight: theme.spacing(1),
-  },
 }));
 
 function FilterBar(props: {
   values: FilterValues;
+  filters: UsageReportFilters;
   onChange: (values: FilterValues) => void;
 }) {
   const classes = useFilterStyles();
-  const keys = Object.keys(props.values) as (keyof FilterValues)[];
+  const api = useApi(usageAnalyticsApiRef);
+  const detailsPermission = usePermission({
+    permission: usageAnalyticsReadDetailsPermission,
+  });
+  const [exporting, setExporting] = useState<UsageExportOptions['dataset']>();
+  const [exportError, setExportError] = useState<Error>();
+  const exportController = useRef<AbortController>();
+
+  useEffect(
+    () => () => {
+      exportController.current?.abort();
+    },
+    [],
+  );
+
+  const exportCsv = async (dataset: UsageExportOptions['dataset']) => {
+    const controller = new AbortController();
+    exportController.current = controller;
+    setExporting(dataset);
+    setExportError(undefined);
+    try {
+      const exported = await api.exportCsv(
+        exportOptions(dataset, props.filters),
+        controller.signal,
+      );
+      if (controller.signal.aborted) {
+        await exported.content.cancel();
+        return;
+      }
+      await downloadCsv(exported);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setExportError(
+          error instanceof Error ? error : new Error('CSV export failed'),
+        );
+      }
+    } finally {
+      if (exportController.current === controller) {
+        exportController.current = undefined;
+        setExporting(undefined);
+      }
+    }
+  };
+
   return (
     <Paper elevation={0} className={classes.root}>
       <Grid container spacing={2} alignItems="center">
-        <Grid item>
-          <FilterListIcon className={classes.icon} />
-        </Grid>
-        {keys.map(name => (
-          <Grid item xs={6} sm={4} md={2} key={name}>
+        {filterFields.map(field => (
+          <Grid item xs={6} sm={4} md={2} key={field.name}>
             <TextField
+              id={`usage-analytics-filter-${field.name}`}
               fullWidth
               size="small"
               variant="outlined"
-              label={filterLabels[name]}
-              name={name}
-              type={name === 'from' || name === 'to' ? 'date' : 'text'}
-              value={props.values[name]}
+              label={field.label}
+              name={field.name}
+              type={field.type}
+              value={props.values[field.name]}
               InputLabelProps={{ shrink: true }}
               onChange={event =>
                 props.onChange({
                   ...props.values,
-                  [name]: event.target.value,
+                  [field.name]: event.target.value,
                 })
               }
             />
           </Grid>
         ))}
         <Grid item>
-          <Button
-            size="small"
-            startIcon={<ClearAllOutlinedIcon />}
-            onClick={() => props.onChange(emptyFilters)}
-          >
+          <Button size="small" onClick={() => props.onChange(emptyFilters)}>
             Clear
           </Button>
         </Grid>
+        <Grid item>
+          <Button
+            size="small"
+            color="primary"
+            disabled={
+              Boolean(exporting) ||
+              detailsPermission.loading ||
+              (Boolean(props.filters.userEntityRef) &&
+                !detailsPermission.allowed) ||
+              (props.filters.action !== undefined &&
+                props.filters.action !== 'navigate')
+            }
+            onClick={() => exportCsv('pages')}
+          >
+            {exporting === 'pages' ? 'Exporting pages…' : 'Export pages'}
+          </Button>
+        </Grid>
+        <Grid item>
+          <Button
+            size="small"
+            color="primary"
+            disabled={
+              Boolean(exporting) ||
+              detailsPermission.loading ||
+              !detailsPermission.allowed
+            }
+            onClick={() => exportCsv('activity')}
+          >
+            {exporting === 'activity'
+              ? 'Exporting activity…'
+              : 'Export activity'}
+          </Button>
+        </Grid>
       </Grid>
+      {exportError && (
+        <Box mt={2}>
+          <ResponseErrorPanel error={exportError} />
+        </Box>
+      )}
     </Paper>
   );
 }
 
-function filterOptions(values: FilterValues): UsageReportFilters {
-  return Object.fromEntries(
-    Object.entries(values)
-      .filter(([, value]) => value)
-      .map(([key, value]) => [key, filterValue(key, value)]),
-  );
+type SaveFilePicker = (options: {
+  suggestedName: string;
+  types: Array<{
+    description: string;
+    accept: Record<string, string[]>;
+  }>;
+}) => Promise<{
+  createWritable(): Promise<WritableStream<Uint8Array>>;
+}>;
+
+async function downloadCsv(exported: {
+  content: ReadableStream<Uint8Array>;
+  contentType: string;
+  filename: string;
+}) {
+  const showSaveFilePicker = (
+    window as Window & { showSaveFilePicker?: SaveFilePicker }
+  ).showSaveFilePicker;
+  if (showSaveFilePicker) {
+    try {
+      const handle = await showSaveFilePicker.call(window, {
+        suggestedName: exported.filename,
+        types: [
+          {
+            description: 'CSV file',
+            accept: { 'text/csv': ['.csv'] },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await exported.content.pipeTo(writable);
+      return;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        await exported.content.cancel();
+        return;
+      }
+      throw error;
+    }
+  }
+
+  const blob = await new Response(exported.content, {
+    headers: { 'Content-Type': exported.contentType },
+  }).blob();
+  downloadBlob(blob, exported.filename);
 }
 
-function filterValue(key: string, value: string) {
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  try {
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+}
+
+function exportOptions(
+  dataset: UsageExportOptions['dataset'],
+  filters: UsageReportFilters,
+): UsageExportOptions {
+  if (dataset === 'activity') {
+    return { dataset, ...filters } as const;
+  }
+
+  const { action, ...pageFilters } = filters;
+  return {
+    dataset,
+    ...pageFilters,
+    ...(action === 'navigate' ? { action } : {}),
+  } as const;
+}
+
+function filterOptions(values: FilterValues): UsageReportFilters {
+  const result: UsageReportFilters = {};
+  for (const { name } of filterFields) {
+    if (values[name]) {
+      result[name] = filterValue(name, values[name]);
+    }
+  }
+  return result;
+}
+
+function filterValue(key: FilterName, value: string) {
   if (key === 'from') return `${value}T00:00:00.000Z`;
-  if (key === 'to') return `${value}T23:59:59.999Z`;
+  if (key === 'to') {
+    const exclusiveEnd = new Date(`${value}T00:00:00.000Z`);
+    exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
+    return exclusiveEnd.toISOString();
+  }
   return value;
 }

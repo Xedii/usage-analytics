@@ -21,45 +21,57 @@ import { UsageOverview } from '@backstage/plugin-usage-analytics-common';
 import { UsagePagesResponse } from '@backstage/plugin-usage-analytics-common';
 import { UsagePluginsResponse } from '@backstage/plugin-usage-analytics-common';
 import { UsagePresenceSummary } from '@backstage/plugin-usage-analytics-common';
-import { UsageSession } from '@backstage/plugin-usage-analytics-common';
 import { UsageSessionsResponse } from '@backstage/plugin-usage-analytics-common';
 import { UsageTimeseries } from '@backstage/plugin-usage-analytics-common';
 import { UsageTimeseriesInterval } from '@backstage/plugin-usage-analytics-common';
 import { UsageUsersResponse } from '@backstage/plugin-usage-analytics-common';
 
+// @public (undocumented)
+export type OnlineUsageUsersOptions = UsagePagingOptions<
+  'userEntityRef' | 'activeSessionCount' | 'currentPath' | 'lastSeenAt'
+>;
+
+// @public
+export interface UsageActivityOptions
+  extends UsageReportOptions<
+    'occurredAt' | 'action' | 'currentPath' | 'pluginId'
+  > {
+  // (undocumented)
+  sessionId?: string;
+}
+
 // @public
 export interface UsageAnalyticsApi {
   // (undocumented)
-  getActivity(
-    options?: UsageReportOptions & {
-      sessionId?: string;
-    },
-  ): Promise<UsageActivityResponse>;
+  exportCsv(
+    options: UsageExportOptions,
+    signal?: AbortSignal,
+  ): Promise<UsageCsvExport>;
+  // (undocumented)
+  getActivity(options?: UsageActivityOptions): Promise<UsageActivityResponse>;
   // (undocumented)
   getEventTypes(options?: UsageReportFilters): Promise<UsageEventTypesResponse>;
   // (undocumented)
   getOnlineUsers(
-    options?: Pick<UsageReportOptions, 'limit' | 'offset'>,
+    options?: OnlineUsageUsersOptions,
   ): Promise<OnlineUsageUsersResponse>;
   // (undocumented)
   getOverview(options?: UsageReportFilters): Promise<UsageOverview>;
   // (undocumented)
-  getPages(options?: UsageReportOptions): Promise<UsagePagesResponse>;
+  getPages(options?: UsagePagesOptions): Promise<UsagePagesResponse>;
   // (undocumented)
-  getPlugins(options?: UsageReportOptions): Promise<UsagePluginsResponse>;
+  getPlugins(options?: UsagePluginsOptions): Promise<UsagePluginsResponse>;
   // (undocumented)
   getPresenceSummary(): Promise<UsagePresenceSummary>;
   // (undocumented)
-  getSession(sessionId: string): Promise<UsageSession>;
-  // (undocumented)
-  getSessions(options?: UsageReportOptions): Promise<UsageSessionsResponse>;
+  getSessions(options?: UsageSessionsOptions): Promise<UsageSessionsResponse>;
   // (undocumented)
   getTimeseries(
     interval: UsageTimeseriesInterval,
     options?: UsageReportFilters,
   ): Promise<UsageTimeseries>;
   // (undocumented)
-  getUsers(options?: UsageReportOptions): Promise<UsageUsersResponse>;
+  getUsers(options?: UsageUsersOptions): Promise<UsageUsersResponse>;
 }
 
 // @public (undocumented)
@@ -69,34 +81,35 @@ export const usageAnalyticsApiRef: ApiRef<UsageAnalyticsApi>;
 export class UsageAnalyticsClient implements UsageAnalyticsApi {
   constructor(discoveryApi: DiscoveryApi, fetchApi: FetchApi);
   // (undocumented)
-  getActivity(
-    options?: Parameters<UsageAnalyticsApi['getActivity']>[0],
-  ): Promise<UsageActivityResponse>;
+  exportCsv(
+    options: UsageExportOptions,
+    signal?: AbortSignal,
+  ): Promise<UsageCsvExport>;
+  // (undocumented)
+  getActivity(options?: UsageActivityOptions): Promise<UsageActivityResponse>;
   // (undocumented)
   getEventTypes(options?: UsageReportFilters): Promise<UsageEventTypesResponse>;
   // (undocumented)
   getOnlineUsers(
-    options?: Pick<UsageReportOptions, 'limit' | 'offset'>,
+    options?: OnlineUsageUsersOptions,
   ): Promise<OnlineUsageUsersResponse>;
   // (undocumented)
   getOverview(options?: UsageReportFilters): Promise<UsageOverview>;
   // (undocumented)
-  getPages(options?: UsageReportOptions): Promise<UsagePagesResponse>;
+  getPages(options?: UsagePagesOptions): Promise<UsagePagesResponse>;
   // (undocumented)
-  getPlugins(options?: UsageReportOptions): Promise<UsagePluginsResponse>;
+  getPlugins(options?: UsagePluginsOptions): Promise<UsagePluginsResponse>;
   // (undocumented)
   getPresenceSummary(): Promise<UsagePresenceSummary>;
   // (undocumented)
-  getSession(sessionId: string): Promise<UsageSession>;
-  // (undocumented)
-  getSessions(options?: UsageReportOptions): Promise<UsageSessionsResponse>;
+  getSessions(options?: UsageSessionsOptions): Promise<UsageSessionsResponse>;
   // (undocumented)
   getTimeseries(
-    interval: 'hour' | 'day' | 'week',
+    interval: UsageTimeseriesInterval,
     options?: UsageReportFilters,
   ): Promise<UsageTimeseries>;
   // (undocumented)
-  getUsers(options?: UsageReportOptions): Promise<UsageUsersResponse>;
+  getUsers(options?: UsageUsersOptions): Promise<UsageUsersResponse>;
 }
 
 // @public (undocumented)
@@ -132,18 +145,57 @@ export default usageAnalyticsPlugin;
 export { usageAnalyticsPlugin };
 
 // @public
-export type UsageReportFilters = Omit<UsageReportOptions, 'limit' | 'offset'>;
+export interface UsageCsvExport {
+  // (undocumented)
+  content: ReadableStream<Uint8Array>;
+  // (undocumented)
+  contentType: string;
+  // (undocumented)
+  filename: string;
+}
 
 // @public
-export interface UsageReportOptions {
-  // (undocumented)
-  action?: string;
-  // (undocumented)
-  from?: string;
+export type UsageExportOptions =
+  | (UsageReportFilters & {
+      dataset: 'activity';
+    })
+  | (Omit<UsageReportFilters, 'action'> & {
+      dataset: 'pages';
+      action?: 'navigate';
+    });
+
+// @public (undocumented)
+export type UsagePagesOptions = UsageReportOptions<
+  | 'path'
+  | 'pageViews'
+  | 'uniqueUsers'
+  | 'estimatedDurationSeconds'
+  | 'lastViewedAt'
+>;
+
+// @public
+export interface UsagePagingOptions<OrderField extends string> {
   // (undocumented)
   limit?: number;
   // (undocumented)
   offset?: number;
+  // (undocumented)
+  orderDirection?: 'asc' | 'desc';
+  // (undocumented)
+  orderField?: OrderField;
+}
+
+// @public (undocumented)
+export type UsagePluginsOptions = UsageReportOptions<
+  'pluginId' | 'events' | 'uniqueUsers' | 'lastUsedAt'
+>;
+
+// @public
+export interface UsageReportFilters {
+  // (undocumented)
+  action?: string;
+  // (undocumented)
+  from?: string;
   // (undocumented)
   path?: string;
   // (undocumented)
@@ -153,4 +205,18 @@ export interface UsageReportOptions {
   // (undocumented)
   userEntityRef?: string;
 }
+
+// @public
+export type UsageReportOptions<OrderField extends string> = UsageReportFilters &
+  UsagePagingOptions<OrderField>;
+
+// @public (undocumented)
+export type UsageSessionsOptions = UsageReportOptions<
+  'sessionId' | 'userEntityRef' | 'lastSeenAt'
+>;
+
+// @public (undocumented)
+export type UsageUsersOptions = UsageReportOptions<
+  'userEntityRef' | 'eventCount' | 'sessionCount' | 'lastSeenAt'
+>;
 ```

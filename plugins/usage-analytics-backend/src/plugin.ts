@@ -32,6 +32,7 @@ export const usageAnalyticsPlugin = createBackendPlugin({
   register(env) {
     env.registerInit({
       deps: {
+        auditor: coreServices.auditor,
         config: coreServices.rootConfig,
         database: coreServices.database,
         httpAuth: coreServices.httpAuth,
@@ -42,6 +43,7 @@ export const usageAnalyticsPlugin = createBackendPlugin({
         scheduler: coreServices.scheduler,
       },
       async init({
+        auditor,
         config,
         database,
         httpAuth,
@@ -60,7 +62,16 @@ export const usageAnalyticsPlugin = createBackendPlugin({
           return;
         }
         const service = new AnalyticsService({ store, config });
-        httpRouter.use(createRouter({ httpAuth, permissions, service, store }));
+        httpRouter.use(
+          createRouter({
+            auditor,
+            httpAuth,
+            logger,
+            permissions,
+            service,
+            store,
+          }),
+        );
 
         const taskRunner = scheduler.createScheduledTaskRunner({
           frequency: { cron: '0 0 * * *' },

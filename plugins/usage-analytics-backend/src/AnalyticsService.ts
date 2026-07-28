@@ -19,7 +19,8 @@ import {
   RecordUsageEventsRequest,
   UsagePresenceHeartbeatRequest,
 } from '@backstage/plugin-usage-analytics-common';
-import { AnalyticsStore, DateRange, Paging } from './types';
+import { DatabaseAnalyticsStore } from './DatabaseAnalyticsStore';
+import { DateRange, Paging } from './types';
 
 const MAX_BATCH_SIZE = 100;
 const MAX_EVENT_AGE_MS = 24 * 60 * 60 * 1000;
@@ -27,23 +28,41 @@ const MAX_RANGE_MS = 365 * 24 * 60 * 60 * 1000;
 const ONLINE_THRESHOLD_MS = 90 * 1000;
 
 type ServiceOptions = {
-  store: AnalyticsStore;
+  store: Pick<DatabaseAnalyticsStore, 'recordEvents' | 'updatePresence'>;
   config: RootConfigService;
 };
 
 export class AnalyticsService {
   readonly retentionEventsDays: number;
   readonly retentionPresenceHours: number;
+  readonly exportSettings: {
+    maxConcurrent: number;
+    timeoutSeconds: number;
+  };
 
-  private readonly store: AnalyticsStore;
+  private readonly store: ServiceOptions['store'];
 
   constructor(options: ServiceOptions) {
     this.store = options.store;
     const { config } = options;
-    this.retentionEventsDays =
-      config.getOptionalNumber('usageAnalytics.retention.eventsDays') ?? 90;
-    this.retentionPresenceHours =
-      config.getOptionalNumber('usageAnalytics.retention.presenceHours') ?? 24;
+    this.retentionEventsDays = positiveRetention(
+      config.getOptionalNumber('usageAnalytics.retention.eventsDays') ?? 90,
+      'usageAnalytics.retention.eventsDays',
+    );
+    this.retentionPresenceHours = positiveRetention(
+      config.getOptionalNumber('usageAnalytics.retention.presenceHours') ?? 24,
+      'usageAnalytics.retention.presenceHours',
+    );
+    this.exportSettings = {
+      maxConcurrent: positiveInteger(
+        config.getOptionalNumber('usageAnalytics.export.maxConcurrent') ?? 2,
+        'usageAnalytics.export.maxConcurrent',
+      ),
+      timeoutSeconds: positiveInteger(
+        config.getOptionalNumber('usageAnalytics.export.timeoutSeconds') ?? 300,
+        'usageAnalytics.export.timeoutSeconds',
+      ),
+    };
   }
 
   async recordEvents(
@@ -128,7 +147,13 @@ export class AnalyticsService {
     return { from: start, to: end };
   }
 
-  parsePaging(limit?: string, offset?: string): Paging {
+  parsePaging(
+    limit?: string,
+    offset?: string,
+    orderField?: string,
+    orderDirection?: string,
+    allowedOrderFields: readonly string[] = [],
+  ): Paging {
     const parsedLimit = limit === undefined ? 50 : Number(limit);
     const parsedOffset = offset === undefined ? 0 : Number(offset);
     if (
@@ -140,7 +165,25 @@ export class AnalyticsService {
     ) {
       throw new InputError('Invalid pagination');
     }
-    return { limit: parsedLimit, offset: parsedOffset };
+    if (
+      (orderField !== undefined && !allowedOrderFields.includes(orderField)) ||
+      (orderDirection !== undefined &&
+        orderDirection !== 'asc' &&
+        orderDirection !== 'desc') ||
+      (orderDirection !== undefined && orderField === undefined)
+    ) {
+      throw new InputError('Invalid sorting');
+    }
+    return {
+      limit: parsedLimit,
+      offset: parsedOffset,
+      ...(orderField
+        ? {
+            orderField,
+            orderDirection: (orderDirection ?? 'asc') as 'asc' | 'desc',
+          }
+        : {}),
+    };
   }
 
   retentionCutoffs(now = new Date()) {
@@ -172,4 +215,18 @@ export class AnalyticsService {
     }
     return pathname.slice(0, 512) || '/';
   }
+}
+
+function positiveRetention(value: number, key: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${key} must be a positive number`);
+  }
+  return value;
+}
+
+function positiveInteger(value: number, key: string): number {
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+  return value;
 }

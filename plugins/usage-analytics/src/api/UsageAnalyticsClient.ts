@@ -23,15 +23,22 @@ import {
   UsagePagesResponse,
   UsagePluginsResponse,
   UsagePresenceSummary,
-  UsageSession,
   UsageSessionsResponse,
   UsageTimeseries,
+  UsageTimeseriesInterval,
   UsageUsersResponse,
 } from '@backstage/plugin-usage-analytics-common';
 import {
+  UsageActivityOptions,
   UsageAnalyticsApi,
+  OnlineUsageUsersOptions,
+  UsageCsvExport,
+  UsageExportOptions,
+  UsagePagesOptions,
+  UsagePluginsOptions,
   UsageReportFilters,
-  UsageReportOptions,
+  UsageSessionsOptions,
+  UsageUsersOptions,
 } from './UsageAnalyticsApi';
 
 /** @public */
@@ -46,7 +53,7 @@ export class UsageAnalyticsClient implements UsageAnalyticsApi {
   }
 
   getTimeseries(
-    interval: 'hour' | 'day' | 'week',
+    interval: UsageTimeseriesInterval,
     options?: UsageReportFilters,
   ) {
     return this.get<UsageTimeseries>('/v1/timeseries', {
@@ -55,30 +62,24 @@ export class UsageAnalyticsClient implements UsageAnalyticsApi {
     });
   }
 
-  getPages(options?: UsageReportOptions) {
+  getPages(options?: UsagePagesOptions) {
     return this.get<UsagePagesResponse>('/v1/pages', options);
   }
 
-  getPlugins(options?: UsageReportOptions) {
+  getPlugins(options?: UsagePluginsOptions) {
     return this.get<UsagePluginsResponse>('/v1/plugins', options);
   }
 
-  getUsers(options?: UsageReportOptions) {
+  getUsers(options?: UsageUsersOptions) {
     return this.get<UsageUsersResponse>('/v1/users', options);
   }
 
-  getActivity(options?: Parameters<UsageAnalyticsApi['getActivity']>[0]) {
+  getActivity(options?: UsageActivityOptions) {
     return this.get<UsageActivityResponse>('/v1/activity', options);
   }
 
-  getSessions(options?: UsageReportOptions) {
+  getSessions(options?: UsageSessionsOptions) {
     return this.get<UsageSessionsResponse>('/v1/sessions', options);
-  }
-
-  getSession(sessionId: string) {
-    return this.get<UsageSession>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}`,
-    );
   }
 
   getEventTypes(options?: UsageReportFilters) {
@@ -89,8 +90,38 @@ export class UsageAnalyticsClient implements UsageAnalyticsApi {
     return this.get<UsagePresenceSummary>('/v1/presence/summary');
   }
 
-  getOnlineUsers(options?: Pick<UsageReportOptions, 'limit' | 'offset'>) {
+  getOnlineUsers(options?: OnlineUsageUsersOptions) {
     return this.get<OnlineUsageUsersResponse>('/v1/presence/online', options);
+  }
+
+  async exportCsv(
+    options: UsageExportOptions,
+    signal?: AbortSignal,
+  ): Promise<UsageCsvExport> {
+    const baseUrl = await this.discoveryApi.getBaseUrl('usage-analytics');
+    const response = await this.fetchApi.fetch(`${baseUrl}/v1/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options),
+      signal,
+    });
+    if (!response.ok) {
+      throw await ResponseError.fromResponse(response);
+    }
+    if (!response.body) {
+      throw new Error('CSV export response did not include a body');
+    }
+
+    const disposition = response.headers.get('Content-Disposition');
+    const filename =
+      disposition?.match(/filename="([^"]+)"/)?.[1] ??
+      `usage-analytics-${options.dataset}.csv`;
+    return {
+      content: response.body,
+      contentType:
+        response.headers.get('Content-Type') ?? 'text/csv; charset=utf-8',
+      filename,
+    };
   }
 
   private async get<T>(path: string, query?: object): Promise<T> {

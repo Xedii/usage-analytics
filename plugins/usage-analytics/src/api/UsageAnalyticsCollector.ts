@@ -26,17 +26,6 @@ const MAX_RETRY_ATTEMPTS = 3;
 const HEARTBEAT_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
-class UsageAnalyticsPostError extends Error {
-  constructor(readonly status: number, readonly retryable: boolean) {
-    super(`Usage analytics ingestion failed with ${status}`);
-  }
-}
-
-type PendingBatch = {
-  events: RecordUsageEventsRequest['events'];
-  retryAttempts: number;
-};
-
 /** @public */
 export class UsageAnalyticsCollector implements AnalyticsApi {
   private readonly sessionId: string;
@@ -45,7 +34,8 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
   private previousNavigationAt = Date.now();
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-  private pendingBatch: PendingBatch | undefined;
+  private activeBatchSize = 0;
+  private retryAttempts = 0;
   private flushInProgress = false;
   private heartbeatInProgress = false;
   private stopped = false;
@@ -57,7 +47,7 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
     },
   ) {
     this.sessionId = window.crypto.randomUUID();
-    this.previousPath = this.browserPath();
+    this.previousPath = window.location.pathname;
     this.sendHeartbeat();
     this.heartbeatTimer = setInterval(() => this.sendHeartbeat(), HEARTBEAT_MS);
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
@@ -65,7 +55,7 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
   }
 
   captureEvent(event: AnalyticsEvent): void {
-    const currentPath = this.browserPath();
+    const currentPath = window.location.pathname;
     const { pluginId, extension } = event.context;
     const value =
       event.action === 'navigate'
@@ -82,15 +72,13 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
       currentPath,
       previousPath: this.previousPath,
     });
-    if (this.queue.length > 1_000) {
-      this.queue.splice(0, this.queue.length - 1_000);
+    const maxQueueSize = 1_000 + this.activeBatchSize;
+    if (this.queue.length > maxQueueSize) {
+      this.queue.splice(this.activeBatchSize, this.queue.length - maxQueueSize);
     }
     if (event.action === 'navigate') {
       this.previousPath = currentPath;
       this.previousNavigationAt = Date.now();
-    }
-    if (this.pendingBatch) {
-      return;
     }
     if (this.queue.length >= 20) {
       this.flush();
@@ -122,7 +110,21 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
   };
 
   private async flush(keepalive = false) {
-    if (this.flushInProgress || this.stopped) {
+    if (this.stopped) {
+      return;
+    }
+    if (this.flushInProgress) {
+      if (keepalive && this.queue.length > 0) {
+        try {
+          await this.post(
+            '/v1/events',
+            { sessionId: this.sessionId, events: this.queue.slice(0, 8) },
+            true,
+          );
+        } catch {
+          // The normal request still owns the batch and will retry it.
+        }
+      }
       return;
     }
     if (this.flushTimer) {
@@ -130,47 +132,43 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
       this.flushTimer = undefined;
     }
     const batchSize = keepalive ? 8 : 100;
-    const pending = this.pendingBatch;
-    const batch =
-      (pending
-        ? {
-            events: pending.events.slice(0, batchSize),
-            retryAttempts: pending.retryAttempts,
-          }
-        : undefined) ??
-      (this.queue.length > 0
-        ? { events: this.queue.splice(0, batchSize), retryAttempts: 0 }
-        : undefined);
-    if (!batch) {
+    const batch = this.queue.slice(0, batchSize);
+    if (batch.length === 0) {
       return;
     }
-    this.pendingBatch =
-      pending && pending.events.length > batch.events.length
-        ? { ...pending, events: pending.events.slice(batch.events.length) }
-        : undefined;
+    this.activeBatchSize = batch.length;
     this.flushInProgress = true;
+    let status: number | undefined;
     try {
-      await this.post(
+      const response = await this.post(
         '/v1/events',
-        { sessionId: this.sessionId, events: batch.events },
+        { sessionId: this.sessionId, events: batch },
         keepalive,
       );
-    } catch (error) {
+      status = response.status;
+      if (!response.ok) {
+        throw new Error(`Usage analytics ingestion failed with ${status}`);
+      }
+      this.queue.splice(0, batch.length);
+      this.retryAttempts = 0;
+    } catch {
       const retryable =
-        !(error instanceof UsageAnalyticsPostError) || error.retryable;
-      if (keepalive) {
-        this.queue.unshift(...batch.events);
-      } else if (retryable && batch.retryAttempts < MAX_RETRY_ATTEMPTS) {
-        this.pendingBatch = {
-          events: batch.events,
-          retryAttempts: batch.retryAttempts + 1,
-        };
-        this.scheduleFlush(FLUSH_DELAY_MS * 2 ** batch.retryAttempts);
+        status === undefined ||
+        status === 408 ||
+        status === 429 ||
+        status >= 500;
+      if (!keepalive && retryable && this.retryAttempts < MAX_RETRY_ATTEMPTS) {
+        this.scheduleFlush(FLUSH_DELAY_MS * 2 ** this.retryAttempts);
+        this.retryAttempts += 1;
+      } else if (!keepalive) {
+        this.queue.splice(0, batch.length);
+        this.retryAttempts = 0;
       }
     } finally {
+      this.activeBatchSize = 0;
       this.flushInProgress = false;
     }
-    if (!this.pendingBatch && this.queue.length > 0 && !keepalive) {
+    if (this.queue.length > 0 && !this.flushTimer) {
       this.scheduleFlush(FLUSH_DELAY_MS);
     }
   }
@@ -185,7 +183,7 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
         '/v1/presence/heartbeat',
         {
           sessionId: this.sessionId,
-          currentPath: this.browserPath(),
+          currentPath: window.location.pathname,
         },
         keepalive,
       );
@@ -207,23 +205,15 @@ export class UsageAnalyticsCollector implements AnalyticsApi {
       keepalive,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!response.ok) {
-      throw new UsageAnalyticsPostError(
-        response.status,
-        response.status === 408 ||
-          response.status === 429 ||
-          response.status >= 500,
-      );
-    }
+    return response;
   }
 
   private scheduleFlush(delayMs: number) {
     if (!this.flushTimer && !this.stopped) {
-      this.flushTimer = setTimeout(() => this.flush(), delayMs);
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = undefined;
+        this.flush();
+      }, delayMs);
     }
-  }
-
-  private browserPath() {
-    return window.location.pathname;
   }
 }

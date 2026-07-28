@@ -113,16 +113,6 @@ export interface UsageActivityItem {
 }
 
 /** @public */
-export interface UsageSession {
-  sessionId: string;
-  userEntityRef: string;
-  startedAt: string;
-  lastSeenAt: string;
-  durationSeconds: number;
-  events: UsageActivityItem[];
-}
-
-/** @public */
 export interface UsageEventType {
   action: string;
   count: number;
@@ -131,7 +121,6 @@ export interface UsageEventType {
 /** @public */
 export interface UsagePresenceSummary {
   onlineUsers: number;
-  onlineSessions: number;
 }
 
 /** @public */

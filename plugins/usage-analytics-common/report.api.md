@@ -165,8 +165,6 @@ export interface UsagePresenceHeartbeatRequest {
 // @public (undocumented)
 export interface UsagePresenceSummary {
   // (undocumented)
-  onlineSessions: number;
-  // (undocumented)
   onlineUsers: number;
 }
 
@@ -176,22 +174,6 @@ export interface UsageRange {
   from: string;
   // (undocumented)
   to: string;
-}
-
-// @public (undocumented)
-export interface UsageSession {
-  // (undocumented)
-  durationSeconds: number;
-  // (undocumented)
-  events: UsageActivityItem[];
-  // (undocumented)
-  lastSeenAt: string;
-  // (undocumented)
-  sessionId: string;
-  // (undocumented)
-  startedAt: string;
-  // (undocumented)
-  userEntityRef: string;
 }
 
 // @public (undocumented)

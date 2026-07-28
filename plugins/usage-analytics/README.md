@@ -59,7 +59,12 @@ const routes = (
 
 The dashboard is now available at `/usage-analytics`. It requires
 `usageAnalyticsReadAggregatesPermission`. The **Users** and **Sessions** tabs
-additionally require `usageAnalyticsReadDetailsPermission`.
+additionally require `usageAnalyticsReadDetailsPermission`. The filter bar can
+download complete CSV exports for page summaries and activity. CSV downloads
+use the active filters and are authorized by the backend; activity exports and
+page exports filtered by user require the detailed-read permission. Browsers
+with the File System Access API stream exports directly to disk; other browsers
+fall back to a standard in-memory download.
 
 ### How collection works
 

@@ -22,7 +22,6 @@ import {
   UsagePagesResponse,
   UsagePluginsResponse,
   UsagePresenceSummary,
-  UsageSession,
   UsageSessionsResponse,
   UsageTimeseries,
   UsageTimeseriesInterval,
@@ -34,23 +33,98 @@ import {
  *
  * @public
  */
-export interface UsageReportOptions {
+export interface UsageReportFilters {
   from?: string;
   to?: string;
   userEntityRef?: string;
   path?: string;
   pluginId?: string;
   action?: string;
-  limit?: number;
-  offset?: number;
 }
 
 /**
- * Filters shared by non-paginated usage analytics reports.
+ * Options for exporting a complete CSV dataset.
  *
  * @public
  */
-export type UsageReportFilters = Omit<UsageReportOptions, 'limit' | 'offset'>;
+export type UsageExportOptions =
+  | (UsageReportFilters & { dataset: 'activity' })
+  | (Omit<UsageReportFilters, 'action'> & {
+      dataset: 'pages';
+      action?: 'navigate';
+    });
+
+/**
+ * A CSV export ready to be downloaded by the browser.
+ *
+ * @public
+ */
+export interface UsageCsvExport {
+  content: ReadableStream<Uint8Array>;
+  contentType: string;
+  filename: string;
+}
+
+/**
+ * Pagination and sorting shared by tabular usage analytics reports.
+ *
+ * @public
+ */
+export interface UsagePagingOptions<OrderField extends string> {
+  limit?: number;
+  offset?: number;
+  orderField?: OrderField;
+  orderDirection?: 'asc' | 'desc';
+}
+
+/**
+ * Options shared by paginated usage analytics reports.
+ *
+ * @public
+ */
+export type UsageReportOptions<OrderField extends string> = UsageReportFilters &
+  UsagePagingOptions<OrderField>;
+
+/** @public */
+export type UsagePagesOptions = UsageReportOptions<
+  | 'path'
+  | 'pageViews'
+  | 'uniqueUsers'
+  | 'estimatedDurationSeconds'
+  | 'lastViewedAt'
+>;
+
+/** @public */
+export type UsagePluginsOptions = UsageReportOptions<
+  'pluginId' | 'events' | 'uniqueUsers' | 'lastUsedAt'
+>;
+
+/** @public */
+export type UsageUsersOptions = UsageReportOptions<
+  'userEntityRef' | 'eventCount' | 'sessionCount' | 'lastSeenAt'
+>;
+
+/** @public */
+export type UsageSessionsOptions = UsageReportOptions<
+  'sessionId' | 'userEntityRef' | 'lastSeenAt'
+>;
+
+/**
+ * Options for querying individual usage events.
+ *
+ * @public
+ */
+export interface UsageActivityOptions
+  extends UsageReportOptions<
+    'occurredAt' | 'action' | 'currentPath' | 'pluginId'
+  > {
+  sessionId?: string;
+}
+
+/** @public */
+export type OnlineUsageUsersOptions = UsagePagingOptions<
+  'userEntityRef' | 'activeSessionCount' | 'currentPath' | 'lastSeenAt'
+>;
 
 /**
  * Read-only client API for the usage analytics backend.
@@ -63,19 +137,20 @@ export interface UsageAnalyticsApi {
     interval: UsageTimeseriesInterval,
     options?: UsageReportFilters,
   ): Promise<UsageTimeseries>;
-  getPages(options?: UsageReportOptions): Promise<UsagePagesResponse>;
-  getPlugins(options?: UsageReportOptions): Promise<UsagePluginsResponse>;
-  getUsers(options?: UsageReportOptions): Promise<UsageUsersResponse>;
-  getActivity(
-    options?: UsageReportOptions & { sessionId?: string },
-  ): Promise<UsageActivityResponse>;
-  getSessions(options?: UsageReportOptions): Promise<UsageSessionsResponse>;
-  getSession(sessionId: string): Promise<UsageSession>;
+  getPages(options?: UsagePagesOptions): Promise<UsagePagesResponse>;
+  getPlugins(options?: UsagePluginsOptions): Promise<UsagePluginsResponse>;
+  getUsers(options?: UsageUsersOptions): Promise<UsageUsersResponse>;
+  getActivity(options?: UsageActivityOptions): Promise<UsageActivityResponse>;
+  getSessions(options?: UsageSessionsOptions): Promise<UsageSessionsResponse>;
   getEventTypes(options?: UsageReportFilters): Promise<UsageEventTypesResponse>;
   getPresenceSummary(): Promise<UsagePresenceSummary>;
   getOnlineUsers(
-    options?: Pick<UsageReportOptions, 'limit' | 'offset'>,
+    options?: OnlineUsageUsersOptions,
   ): Promise<OnlineUsageUsersResponse>;
+  exportCsv(
+    options: UsageExportOptions,
+    signal?: AbortSignal,
+  ): Promise<UsageCsvExport>;
 }
 
 /** @public */

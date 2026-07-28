@@ -20,6 +20,14 @@ jest.setTimeout(60_000);
 
 const databases = TestDatabases.create({ ids: ['POSTGRES_14', 'SQLITE_3'] });
 
+async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
+  const values = [];
+  for await (const value of source) {
+    values.push(value);
+  }
+  return values;
+}
+
 describe.each(databases.eachSupportedId())(
   'DatabaseAnalyticsStore (%s)',
   databaseId => {
@@ -128,14 +136,6 @@ describe.each(databases.eachSupportedId())(
         ],
         total: 1,
       });
-      await expect(store.getSession(event.sessionId)).resolves.toMatchObject({
-        sessionId: event.sessionId,
-        userEntityRef: event.userEntityRef,
-        startedAt: occurredAt.toISOString(),
-        lastSeenAt: secondOccurredAt.toISOString(),
-        durationSeconds: 1_800,
-        events: [{ action: 'navigate' }, { action: 'click' }],
-      });
       await expect(store.getEventTypes(range)).resolves.toEqual({
         items: expect.arrayContaining([
           { action: 'navigate', count: 1 },
@@ -152,7 +152,7 @@ describe.each(databases.eachSupportedId())(
       });
       await expect(
         store.getPresenceSummary(new Date('2026-07-18T01:04:00.000Z')),
-      ).resolves.toEqual({ onlineUsers: 1, onlineSessions: 1 });
+      ).resolves.toEqual({ onlineUsers: 1 });
       await expect(
         store.getOnlineUsers(new Date('2026-07-18T01:04:00.000Z'), {
           limit: 10,
@@ -178,6 +178,145 @@ describe.each(databases.eachSupportedId())(
         }),
       ).resolves.toMatchObject({
         items: [{ currentPath: '/latest', activeSessionCount: 1 }],
+      });
+
+      const bobSessionId = 'a4e64944-c349-42ce-94ac-04357e8b62ef';
+      await store.recordEvents([
+        {
+          ...event,
+          eventId: '5fc073d7-3e16-4831-ab25-85d9003f4571',
+          occurredAt: new Date('2026-07-18T02:00:00.000Z'),
+          receivedAt: new Date('2026-07-18T02:00:00.000Z'),
+          currentPath: '/slow',
+          pluginId: 'catalog',
+        },
+        {
+          ...event,
+          eventId: 'f47a86fd-d7a2-4ad2-956c-17e1696828a4',
+          occurredAt: new Date('2026-07-18T02:02:00.000Z'),
+          receivedAt: new Date('2026-07-18T02:02:00.000Z'),
+          currentPath: '/end',
+          previousPath: '/slow',
+          value: 120,
+          pluginId: 'catalog',
+        },
+        {
+          ...event,
+          eventId: '20fcb645-519f-42d9-a84e-e317360e3486',
+          occurredAt: new Date('2026-07-18T03:00:00.000Z'),
+          receivedAt: new Date('2026-07-18T03:00:00.000Z'),
+          userEntityRef: 'user:default/bob',
+          sessionId: bobSessionId,
+          currentPath: '/fast',
+          pluginId: 'search',
+        },
+        {
+          ...event,
+          eventId: '6f6291d7-d45e-49d0-96cc-ed17aa699bb7',
+          occurredAt: new Date('2026-07-18T03:00:10.000Z'),
+          receivedAt: new Date('2026-07-18T03:00:10.000Z'),
+          userEntityRef: 'user:default/bob',
+          sessionId: bobSessionId,
+          currentPath: '/end',
+          previousPath: '/fast',
+          value: 10,
+        },
+      ]);
+
+      await expect(
+        store.getPages(range, {
+          limit: 1,
+          offset: 1,
+          orderField: 'estimatedDurationSeconds',
+          orderDirection: 'desc',
+        }),
+      ).resolves.toMatchObject({
+        items: [{ path: '/fast', estimatedDurationSeconds: 10 }],
+        total: 4,
+      });
+      await expect(
+        store.getUsers(range, {
+          limit: 1,
+          offset: 0,
+          orderField: 'eventCount',
+          orderDirection: 'asc',
+        }),
+      ).resolves.toMatchObject({
+        items: [{ userEntityRef: 'user:default/bob', eventCount: 2 }],
+        total: 2,
+      });
+      await expect(
+        store.getActivity({
+          ...range,
+          limit: 1,
+          offset: 0,
+          orderField: 'action',
+          orderDirection: 'asc',
+        }),
+      ).resolves.toMatchObject({ items: [{ action: 'click' }], total: 6 });
+      await expect(
+        store.getActivity({
+          ...range,
+          limit: 1,
+          offset: 0,
+          orderField: 'pluginId',
+          orderDirection: 'asc',
+        }),
+      ).resolves.toMatchObject({
+        items: [{ pluginId: 'catalog' }],
+        total: 6,
+      });
+      await expect(
+        store.getSessions(range, {
+          limit: 1,
+          offset: 0,
+          orderField: 'userEntityRef',
+          orderDirection: 'desc',
+        }),
+      ).resolves.toMatchObject({
+        items: [{ userEntityRef: 'user:default/bob' }],
+        total: 2,
+      });
+      await expect(
+        store.getPlugins(range, {
+          limit: 1,
+          offset: 0,
+          orderField: 'events',
+          orderDirection: 'asc',
+        }),
+      ).resolves.toMatchObject({
+        items: [{ pluginId: 'search', events: 1 }],
+        total: 2,
+      });
+
+      await store.updatePresence({
+        sessionId: 'ca23986c-5c10-45de-99ee-2b02495ddcf6',
+        userEntityRef: event.userEntityRef,
+        currentPath: '/second-session',
+        seenAt: new Date('2026-07-18T03:01:00.000Z'),
+      });
+      await store.updatePresence({
+        sessionId: bobSessionId,
+        userEntityRef: 'user:default/bob',
+        currentPath: '/fast',
+        seenAt: new Date('2026-07-18T03:02:00.000Z'),
+      });
+      await expect(
+        store.getOnlineUsers(new Date('2026-07-18T01:04:00.000Z'), {
+          limit: 1,
+          offset: 0,
+          orderField: 'activeSessionCount',
+          orderDirection: 'desc',
+        }),
+      ).resolves.toMatchObject({
+        items: [
+          {
+            userEntityRef: event.userEntityRef,
+            activeSessionCount: 2,
+            currentPath: '/second-session',
+          },
+        ],
+        total: 2,
       });
     });
 
@@ -230,6 +369,65 @@ describe.each(databases.eachSupportedId())(
           presenceBefore: new Date('2026-01-01T00:00:00.000Z'),
         }),
       ).resolves.toEqual({ events: 1, presence: 1 });
+    });
+
+    it('streams complete exports in canonical order using one statement', async () => {
+      const knex = await databases.init(databaseId);
+      const store = await DatabaseAnalyticsStore.create({
+        database: mockServices.database({ knex }),
+      });
+      const occurredAt = new Date('2026-07-18T00:30:00.000Z');
+      const paths = ['/é', '/a', '/A'];
+      await store.recordEvents(
+        Array.from({ length: 105 }, (_, index) => ({
+          eventId: `00000000-0000-4000-8000-${index
+            .toString(16)
+            .padStart(12, '0')}`,
+          occurredAt,
+          receivedAt: occurredAt,
+          userEntityRef: 'user:default/alice',
+          sessionId: '35a52f7d-5583-42bb-951a-49f45e914c00',
+          action: 'navigate',
+          currentPath: paths[index % paths.length],
+        })),
+      );
+      const range = {
+        from: new Date('2026-07-18T00:00:00.000Z'),
+        to: new Date('2026-07-19T00:00:00.000Z'),
+      };
+
+      let statements = 0;
+      const countStatement = () => {
+        statements += 1;
+      };
+      knex.on('query', countStatement);
+      const activity = await collect(store.exportActivity(range));
+      knex.off('query', countStatement);
+
+      expect(activity).toHaveLength(105);
+      expect(activity.map(row => row.eventId)).toEqual(
+        [...activity.map(row => row.eventId)].sort(),
+      );
+      expect(statements).toBe(1);
+
+      statements = 0;
+      knex.on('query', countStatement);
+      const pages = await collect(store.exportPages(range));
+      knex.off('query', countStatement);
+
+      expect(pages).toEqual([
+        expect.objectContaining({ path: '/A', pageViews: 35 }),
+        expect.objectContaining({ path: '/a', pageViews: 35 }),
+        expect.objectContaining({ path: '/é', pageViews: 35 }),
+      ]);
+      expect(statements).toBe(1);
+
+      const interrupted = store.exportActivity(range)[Symbol.asyncIterator]();
+      await expect(interrupted.next()).resolves.toMatchObject({ done: false });
+      await interrupted.return?.();
+      await expect(store.getOverview(range)).resolves.toMatchObject({
+        eventCount: 105,
+      });
     });
   },
 );

@@ -28,9 +28,18 @@ export {
 } from './plugin';
 export {
   usageAnalyticsApiRef,
+  type OnlineUsageUsersOptions,
+  type UsageActivityOptions,
   type UsageAnalyticsApi,
+  type UsageCsvExport,
+  type UsageExportOptions,
+  type UsagePagesOptions,
+  type UsagePagingOptions,
+  type UsagePluginsOptions,
   type UsageReportFilters,
   type UsageReportOptions,
+  type UsageSessionsOptions,
+  type UsageUsersOptions,
 } from './api/UsageAnalyticsApi';
 export { UsageAnalyticsClient } from './api/UsageAnalyticsClient';
 export { UsageAnalyticsCollector } from './api/UsageAnalyticsCollector';

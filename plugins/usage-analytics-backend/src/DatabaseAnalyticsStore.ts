@@ -17,7 +17,7 @@ import {
   DatabaseService,
   resolvePackagePath,
 } from '@backstage/backend-plugin-api';
-import { ConflictError, NotFoundError } from '@backstage/errors';
+import { ConflictError } from '@backstage/errors';
 import {
   OnlineUsageUser,
   UsageActivityItem,
@@ -32,7 +32,9 @@ import {
 import { Knex } from 'knex';
 import {
   ActivityQuery,
-  AnalyticsStore,
+  ExportActivityRow,
+  ExportPageRow,
+  ExportRowStream,
   Paging,
   ReportQuery,
   StoredPresence,
@@ -73,7 +75,15 @@ type OverviewRow = {
   page_views: string | number | null;
 };
 
-export class DatabaseAnalyticsStore implements AnalyticsStore {
+type PageRow = {
+  path: string;
+  page_views: string | number;
+  unique_users: string | number;
+  estimated_duration_seconds: string | number;
+  last_viewed_at: Date | string | number;
+};
+
+export class DatabaseAnalyticsStore {
   private readonly isSQLite: boolean;
 
   private constructor(private readonly db: Knex) {
@@ -206,60 +216,38 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
 
   async getPages(range: ReportQuery, paging: Paging) {
     const base = this.rangeQuery(range).where('action', 'navigate');
-    const totalRow = await base
+    const totalQuery = base
       .clone()
       .countDistinct<{ total: string | number }>({ total: 'current_path' })
       .first();
-    const rows = await base
-      .clone()
-      .select('current_path')
-      .count<{ page_views: string | number }>({ page_views: '*' })
-      .countDistinct<{ unique_users: string | number }>({
-        unique_users: 'user_entity_ref',
-      })
-      .max<{ last_viewed_at: Date | string | number }>({
-        last_viewed_at: 'occurred_at',
-      })
-      .groupBy('current_path')
-      .orderBy('page_views', 'desc')
-      .limit(paging.limit)
-      .offset(paging.offset);
-
-    const dwellRows = await this.applyReportFilters(
-      this.db<EventRow>('usage_events')
-        .where('occurred_at', '>=', range.from)
-        .where('occurred_at', '<', range.to)
-        .where('action', 'navigate')
-        .whereNotNull('previous_path'),
-      range,
-      'previous_path',
-    )
-      .select({ path: 'previous_path' })
-      .sum<{ duration: string | number }>({ duration: 'value' })
-      .groupBy('previous_path');
-    const durations = new Map(
-      dwellRows.map(row => [row.path, this.toNumber(row.duration)]),
+    const rowsQuery = this.pageAggregateQuery(range);
+    this.applyPaging(
+      rowsQuery,
+      paging,
+      {
+        path: 'pages.path',
+        pageViews: 'pages.page_views',
+        uniqueUsers: 'pages.unique_users',
+        estimatedDurationSeconds: 'estimated_duration_seconds',
+        lastViewedAt: 'pages.last_viewed_at',
+      },
+      'pageViews',
+      'desc',
+      'pages.path',
     );
+    const [totalRow, rows] = await Promise.all([totalQuery, rowsQuery]);
 
-    const items: UsagePage[] = rows.map(row => ({
-      path: row.current_path,
-      pageViews: this.toNumber(row.page_views),
-      uniqueUsers: this.toNumber(row.unique_users),
-      estimatedDurationSeconds: Math.round(
-        durations.get(row.current_path) ?? 0,
-      ),
-      lastViewedAt: this.toISOString(row.last_viewed_at),
-    }));
+    const items: UsagePage[] = rows.map(row => this.mapPage(row));
     return { items, total: this.toNumber(totalRow?.total) };
   }
 
   async getUsers(range: ReportQuery, paging: Paging) {
     const base = this.rangeQuery(range);
-    const totalRow = await base
+    const totalQuery = base
       .clone()
       .countDistinct<{ total: string | number }>({ total: 'user_entity_ref' })
       .first();
-    const rows = await base
+    const rowsQuery = base
       .clone()
       .select('user_entity_ref')
       .count<{ event_count: string | number }>({ event_count: '*' })
@@ -272,10 +260,21 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
       .max<{ last_seen_at: Date | string | number }>({
         last_seen_at: 'occurred_at',
       })
-      .groupBy('user_entity_ref')
-      .orderBy('last_seen_at', 'desc')
-      .limit(paging.limit)
-      .offset(paging.offset);
+      .groupBy('user_entity_ref');
+    this.applyPaging(
+      rowsQuery,
+      paging,
+      {
+        userEntityRef: 'user_entity_ref',
+        eventCount: 'event_count',
+        sessionCount: 'session_count',
+        lastSeenAt: 'last_seen_at',
+      },
+      'lastSeenAt',
+      'desc',
+      'user_entity_ref',
+    );
+    const [totalRow, rows] = await Promise.all([totalQuery, rowsQuery]);
 
     const items: UsageUser[] = rows.map(row => ({
       userEntityRef: row.user_entity_ref,
@@ -288,29 +287,32 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
   }
 
   async getActivity(query: ActivityQuery) {
-    const base = this.applyActivityFilters(this.rangeQuery(query), query);
-    const totalRow = await base
+    const base = this.rangeQuery(query);
+    if (query.sessionId) {
+      base.where('session_id', query.sessionId);
+    }
+    const totalQuery = base
       .clone()
       .count<{ total: string | number }>({ total: '*' })
       .first();
-    const rows = await base
-      .clone()
-      .select<EventRow[]>([
-        'event_id',
-        'occurred_at',
-        'user_entity_ref',
-        'session_id',
-        'action',
-        'subject',
-        'value',
-        'plugin_id',
-        'extension_id',
-        'current_path',
-        'previous_path',
-      ])
-      .orderBy('occurred_at', 'desc')
-      .limit(query.limit)
-      .offset(query.offset);
+    const rowsQuery = this.activityRowsQuery(query);
+    if (query.sessionId) {
+      rowsQuery.where('session_id', query.sessionId);
+    }
+    this.applyPaging(
+      rowsQuery,
+      query,
+      {
+        occurredAt: 'occurred_at',
+        action: 'action',
+        currentPath: 'current_path',
+        pluginId: 'plugin_id',
+      },
+      'occurredAt',
+      'desc',
+      'event_id',
+    );
+    const [totalRow, rows] = await Promise.all([totalQuery, rowsQuery]);
 
     return {
       items: rows.map(row => this.mapActivity(row)),
@@ -318,46 +320,30 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
     };
   }
 
-  async getSession(sessionId: string) {
-    const base = this.db<EventRow>('usage_events').where({
-      session_id: sessionId,
-    });
-    const [summary, newestRows] = await Promise.all([
-      base
-        .clone()
-        .select('user_entity_ref')
-        .min<{ started_at: Date | string | number }>({
-          started_at: 'occurred_at',
-        })
-        .max<{ last_seen_at: Date | string | number }>({
-          last_seen_at: 'occurred_at',
-        })
-        .groupBy('user_entity_ref')
-        .first(),
-      base.clone().select().orderBy('occurred_at', 'asc'),
-    ]);
-    if (!summary || newestRows.length === 0) {
-      throw new NotFoundError(`Session '${sessionId}' was not found`);
-    }
+  exportActivity(range: ReportQuery): ExportRowStream<ExportActivityRow> {
+    const query = this.activityRowsQuery(range)
+      .orderBy('occurred_at', 'asc')
+      .orderBy('event_id', 'asc');
+    return this.streamRows<EventRow, ExportActivityRow>(query, row =>
+      this.mapActivity(row),
+    );
+  }
 
-    const startedAt = new Date(this.toISOString(summary.started_at));
-    const lastSeenAt = new Date(this.toISOString(summary.last_seen_at));
-    return {
-      sessionId,
-      userEntityRef: summary.user_entity_ref,
-      startedAt: startedAt.toISOString(),
-      lastSeenAt: lastSeenAt.toISOString(),
-      durationSeconds: Math.max(
-        0,
-        Math.round((lastSeenAt.valueOf() - startedAt.valueOf()) / 1000),
-      ),
-      events: newestRows.map(row => this.mapActivity(row)),
-    };
+  exportPages(range: ReportQuery): ExportRowStream<ExportPageRow> {
+    const query = this.pageAggregateQuery(range)
+      .orderBy('pages.page_views', 'desc')
+      .orderByRaw(
+        this.isSQLite ? '?? collate binary asc' : '?? collate "C" asc',
+        ['pages.path'],
+      );
+    return this.streamRows<PageRow, ExportPageRow>(query, row =>
+      this.mapPage(row),
+    );
   }
 
   async getSessions(query: ReportQuery, paging: Paging) {
     const base = this.rangeQuery(query);
-    const totalRow = await this.db
+    const totalQuery = this.db
       .from(
         base
           .clone()
@@ -367,7 +353,7 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
       )
       .count<{ total: string | number }>({ total: '*' })
       .first();
-    const rows = await base
+    const rowsQuery = base
       .select('session_id', 'user_entity_ref')
       .min<{ started_at: Date | string | number }>({
         started_at: 'occurred_at',
@@ -376,35 +362,36 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
         last_seen_at: 'occurred_at',
       })
       .count<{ event_count: string | number }>({ event_count: '*' })
-      .groupBy('session_id', 'user_entity_ref')
-      .orderBy('last_seen_at', 'desc')
-      .limit(paging.limit)
-      .offset(paging.offset);
-    const items: UsageSessionSummary[] = rows.map(row => {
-      const startedAt = new Date(this.toISOString(row.started_at));
-      const lastSeenAt = new Date(this.toISOString(row.last_seen_at));
-      return {
-        sessionId: row.session_id,
-        userEntityRef: row.user_entity_ref,
-        startedAt: startedAt.toISOString(),
-        lastSeenAt: lastSeenAt.toISOString(),
-        durationSeconds: Math.max(
-          0,
-          Math.round((lastSeenAt.valueOf() - startedAt.valueOf()) / 1_000),
-        ),
-        eventCount: this.toNumber(row.event_count),
-      };
-    });
+      .groupBy('session_id', 'user_entity_ref');
+    this.applyPaging(
+      rowsQuery,
+      paging,
+      {
+        sessionId: 'session_id',
+        userEntityRef: 'user_entity_ref',
+        lastSeenAt: 'last_seen_at',
+      },
+      'lastSeenAt',
+      'desc',
+      'session_id',
+    );
+    const [totalRow, rows] = await Promise.all([totalQuery, rowsQuery]);
+    const items: UsageSessionSummary[] = rows.map(row => ({
+      sessionId: row.session_id,
+      userEntityRef: row.user_entity_ref,
+      ...this.sessionWindow(row.started_at, row.last_seen_at),
+      eventCount: this.toNumber(row.event_count),
+    }));
     return { items, total: this.toNumber(totalRow?.total) };
   }
 
   async getPlugins(range: ReportQuery, paging: Paging) {
     const base = this.rangeQuery(range).whereNotNull('plugin_id');
-    const totalRow = await base
+    const totalQuery = base
       .clone()
       .countDistinct<{ total: string | number }>({ total: 'plugin_id' })
       .first();
-    const rows = await base
+    const rowsQuery = base
       .select('plugin_id')
       .count<{ events: string | number }>({ events: '*' })
       .countDistinct<{ unique_users: string | number }>({
@@ -413,10 +400,21 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
       .max<{ last_used_at: Date | string | number }>({
         last_used_at: 'occurred_at',
       })
-      .groupBy('plugin_id')
-      .orderBy('events', 'desc')
-      .limit(paging.limit)
-      .offset(paging.offset);
+      .groupBy('plugin_id');
+    this.applyPaging(
+      rowsQuery,
+      paging,
+      {
+        pluginId: 'plugin_id',
+        events: 'events',
+        uniqueUsers: 'unique_users',
+        lastUsedAt: 'last_used_at',
+      },
+      'events',
+      'desc',
+      'plugin_id',
+    );
+    const [totalRow, rows] = await Promise.all([totalQuery, rowsQuery]);
     const items: UsagePlugin[] = rows.map(row => ({
       pluginId: row.plugin_id!,
       events: this.toNumber(row.events),
@@ -442,42 +440,68 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
   async getPresenceSummary(onlineAfter: Date) {
     const row = await this.db<PresenceRow>('usage_presence')
       .where('last_seen_at', '>=', onlineAfter)
-      .count<{ online_sessions: string | number }>({ online_sessions: '*' })
       .countDistinct<{ online_users: string | number }>({
         online_users: 'user_entity_ref',
       })
       .first();
     return {
       onlineUsers: this.toNumber(row?.online_users),
-      onlineSessions: this.toNumber(row?.online_sessions),
     };
   }
 
   async getOnlineUsers(onlineAfter: Date, paging: Paging) {
-    const rows = await this.db<PresenceRow>('usage_presence')
-      .where('last_seen_at', '>=', onlineAfter)
-      .select()
-      .orderBy('last_seen_at', 'desc');
-    // ponytail: online presence is small; move grouping to SQL if it grows.
-    const grouped = new Map<string, OnlineUsageUser>();
-    for (const row of rows) {
-      const current = grouped.get(row.user_entity_ref);
-      if (current) {
-        current.activeSessionCount += 1;
-      } else {
-        grouped.set(row.user_entity_ref, {
-          userEntityRef: row.user_entity_ref,
-          activeSessionCount: 1,
-          currentPath: row.current_path,
-          lastSeenAt: this.toISOString(row.last_seen_at),
-        });
-      }
-    }
-    const users = [...grouped.values()];
-    return {
-      items: users.slice(paging.offset, paging.offset + paging.limit),
-      total: users.length,
-    };
+    const base = this.db<PresenceRow>('usage_presence').where(
+      'last_seen_at',
+      '>=',
+      onlineAfter,
+    );
+    const totalQuery = base
+      .clone()
+      .countDistinct<{ total: string | number }>({
+        total: 'user_entity_ref',
+      })
+      .first();
+    const ranked = base
+      .clone()
+      .select(['user_entity_ref', 'current_path', 'last_seen_at', 'session_id'])
+      .select({
+        active_session_count: this.db.raw(
+          'count(*) over (partition by user_entity_ref)',
+        ),
+        row_number: this.db.raw(
+          'row_number() over (partition by user_entity_ref order by last_seen_at desc, session_id asc)',
+        ),
+      });
+    const rowsQuery = this.db
+      .from(ranked.as('online_users'))
+      .where('row_number', 1)
+      .select([
+        'user_entity_ref',
+        'active_session_count',
+        'current_path',
+        'last_seen_at',
+      ]);
+    this.applyPaging(
+      rowsQuery,
+      paging,
+      {
+        userEntityRef: 'user_entity_ref',
+        activeSessionCount: 'active_session_count',
+        currentPath: 'current_path',
+        lastSeenAt: 'last_seen_at',
+      },
+      'lastSeenAt',
+      'desc',
+      'user_entity_ref',
+    );
+    const [totalRow, rows] = await Promise.all([totalQuery, rowsQuery]);
+    const items: OnlineUsageUser[] = rows.map(row => ({
+      userEntityRef: row.user_entity_ref,
+      activeSessionCount: this.toNumber(row.active_session_count),
+      currentPath: row.current_path,
+      lastSeenAt: this.toISOString(row.last_seen_at),
+    }));
+    return { items, total: this.toNumber(totalRow?.total) };
   }
 
   async deleteExpiredData(options: {
@@ -533,24 +557,84 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
     }
   }
 
-  private rangeQuery(range: ReportQuery) {
+  private rangeQuery(range: ReportQuery, pathColumn = 'current_path') {
     return this.applyReportFilters(
       this.db<EventRow>('usage_events')
         .where('occurred_at', '>=', range.from)
         .where('occurred_at', '<', range.to),
       range,
+      pathColumn,
     );
   }
 
-  private applyActivityFilters(
-    query: Knex.QueryBuilder<EventRow, EventRow[]>,
-    filters: ActivityQuery,
-  ) {
-    this.applyReportFilters(query, filters);
-    if (filters.sessionId) {
-      query.where('session_id', filters.sessionId);
-    }
-    return query;
+  private activityRowsQuery(range: ReportQuery) {
+    return this.rangeQuery(range).select<EventRow[]>([
+      'event_id',
+      'occurred_at',
+      'user_entity_ref',
+      'session_id',
+      'action',
+      'subject',
+      'value',
+      'plugin_id',
+      'extension_id',
+      'current_path',
+      'previous_path',
+    ]);
+  }
+
+  private pageAggregateQuery(range: ReportQuery) {
+    const pages = this.rangeQuery(range)
+      .where('action', 'navigate')
+      .select({ path: 'current_path' })
+      .count<{ page_views: string | number }>({ page_views: '*' })
+      .countDistinct<{ unique_users: string | number }>({
+        unique_users: 'user_entity_ref',
+      })
+      .max<{ last_viewed_at: Date | string | number }>({
+        last_viewed_at: 'occurred_at',
+      })
+      .groupBy('current_path');
+    const dwell = this.rangeQuery(range, 'previous_path')
+      .where('action', 'navigate')
+      .whereNotNull('previous_path')
+      .select({ path: 'previous_path' })
+      .sum<{ estimated_duration_seconds: string | number }>({
+        estimated_duration_seconds: 'value',
+      })
+      .groupBy('previous_path');
+    return this.db
+      .from(pages.as('pages'))
+      .leftJoin(dwell.as('dwell'), 'dwell.path', 'pages.path')
+      .select('pages.*')
+      .select({
+        estimated_duration_seconds: this.db.raw(
+          'coalesce(dwell.estimated_duration_seconds, 0)',
+        ),
+      });
+  }
+
+  private streamRows<Input, Output>(
+    query: Knex.QueryBuilder,
+    map: (row: Input) => Output,
+  ): ExportRowStream<Output> {
+    const stream = query.stream();
+    const rows = (async function* generateRows() {
+      try {
+        for await (const row of stream) {
+          yield map(row as Input);
+        }
+      } finally {
+        if (!stream.destroyed) {
+          stream.destroy();
+        }
+      }
+    })();
+    return Object.assign(rows, {
+      destroy(error?: Error) {
+        stream.destroy(error);
+      },
+    });
   }
 
   private applyReportFilters(
@@ -564,6 +648,28 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
     if (filters.path) query.where(pathColumn, filters.path);
     if (filters.pluginId) query.where('plugin_id', filters.pluginId);
     return query;
+  }
+
+  private applyPaging(
+    query: Knex.QueryBuilder,
+    paging: Paging,
+    fields: Record<string, string>,
+    defaultField: string,
+    defaultDirection: 'asc' | 'desc',
+    tieBreaker: string,
+  ) {
+    const orderField = paging.orderField ?? defaultField;
+    const field = fields[orderField];
+    const direction = paging.orderDirection ?? defaultDirection;
+    if (field === 'plugin_id') {
+      query.orderByRaw(`?? is null asc, ?? ${direction}`, [field, field]);
+    } else {
+      query.orderBy(field, direction);
+    }
+    if (field !== tieBreaker) {
+      query.orderBy(tieBreaker, 'asc');
+    }
+    query.limit(paging.limit).offset(paging.offset);
   }
 
   private bucketExpression(
@@ -603,6 +709,34 @@ export class DatabaseAnalyticsStore implements AnalyticsStore {
       ...(row.extension_id ? { extensionId: row.extension_id } : {}),
       currentPath: row.current_path,
       ...(row.previous_path ? { previousPath: row.previous_path } : {}),
+    };
+  }
+
+  private mapPage(row: PageRow): UsagePage {
+    return {
+      path: row.path,
+      pageViews: this.toNumber(row.page_views),
+      uniqueUsers: this.toNumber(row.unique_users),
+      estimatedDurationSeconds: Math.round(
+        this.toNumber(row.estimated_duration_seconds),
+      ),
+      lastViewedAt: this.toISOString(row.last_viewed_at),
+    };
+  }
+
+  private sessionWindow(
+    startedAtValue: Date | string | number,
+    lastSeenAtValue: Date | string | number,
+  ) {
+    const startedAt = new Date(this.toISOString(startedAtValue));
+    const lastSeenAt = new Date(this.toISOString(lastSeenAtValue));
+    return {
+      startedAt: startedAt.toISOString(),
+      lastSeenAt: lastSeenAt.toISOString(),
+      durationSeconds: Math.max(
+        0,
+        Math.round((lastSeenAt.valueOf() - startedAt.valueOf()) / 1_000),
+      ),
     };
   }
 

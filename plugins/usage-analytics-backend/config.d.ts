@@ -21,5 +21,11 @@ export interface Config {
       /** @visibility backend */
       presenceHours?: number;
     };
+    export?: {
+      /** Maximum number of exports running on one backend instance. @visibility backend */
+      maxConcurrent?: number;
+      /** Export deadline in seconds. @visibility backend */
+      timeoutSeconds?: number;
+    };
   };
 }

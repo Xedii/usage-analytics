@@ -13,21 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {
-  OnlineUsageUsersResponse,
-  UsageActivityResponse,
-  UsageEventTypesResponse,
-  UsageOverview,
-  UsagePagesResponse,
-  UsagePluginsResponse,
-  UsagePresenceSummary,
-  UsageSession,
-  UsageSessionsResponse,
-  UsageTimeseries,
-  UsageTimeseriesInterval,
-  UsageUsersResponse,
-} from '@backstage/plugin-usage-analytics-common';
-
 export interface DateRange {
   from: Date;
   to: Date;
@@ -36,6 +21,8 @@ export interface DateRange {
 export interface Paging {
   limit: number;
   offset: number;
+  orderField?: string;
+  orderDirection?: 'asc' | 'desc';
 }
 
 export interface ReportQuery extends DateRange {
@@ -47,6 +34,32 @@ export interface ReportQuery extends DateRange {
 
 export interface ActivityQuery extends ReportQuery, Paging {
   sessionId?: string;
+}
+
+export interface ExportActivityRow {
+  eventId: string;
+  occurredAt: string;
+  userEntityRef: string;
+  sessionId: string;
+  action: string;
+  subject?: string;
+  value?: number;
+  pluginId?: string;
+  extensionId?: string;
+  currentPath: string;
+  previousPath?: string;
+}
+
+export interface ExportPageRow {
+  path: string;
+  pageViews: number;
+  uniqueUsers: number;
+  estimatedDurationSeconds: number;
+  lastViewedAt: string;
+}
+
+export interface ExportRowStream<T> extends AsyncIterable<T> {
+  destroy(error?: Error): void;
 }
 
 export interface StoredUsageEvent {
@@ -69,33 +82,4 @@ export interface StoredPresence {
   userEntityRef: string;
   currentPath: string;
   seenAt: Date;
-}
-
-export interface AnalyticsStore {
-  recordEvents(events: StoredUsageEvent[]): Promise<void>;
-  updatePresence(presence: StoredPresence): Promise<void>;
-  getOverview(range: ReportQuery): Promise<UsageOverview>;
-  getTimeseries(
-    range: ReportQuery,
-    interval: UsageTimeseriesInterval,
-  ): Promise<UsageTimeseries>;
-  getPages(range: ReportQuery, paging: Paging): Promise<UsagePagesResponse>;
-  getPlugins(range: ReportQuery, paging: Paging): Promise<UsagePluginsResponse>;
-  getUsers(range: ReportQuery, paging: Paging): Promise<UsageUsersResponse>;
-  getActivity(query: ActivityQuery): Promise<UsageActivityResponse>;
-  getSessions(
-    range: ReportQuery,
-    paging: Paging,
-  ): Promise<UsageSessionsResponse>;
-  getSession(sessionId: string): Promise<UsageSession>;
-  getEventTypes(range: ReportQuery): Promise<UsageEventTypesResponse>;
-  getPresenceSummary(onlineAfter: Date): Promise<UsagePresenceSummary>;
-  getOnlineUsers(
-    onlineAfter: Date,
-    paging: Paging,
-  ): Promise<OnlineUsageUsersResponse>;
-  deleteExpiredData(options: {
-    eventsBefore: Date;
-    presenceBefore: Date;
-  }): Promise<{ events: number; presence: number }>;
 }

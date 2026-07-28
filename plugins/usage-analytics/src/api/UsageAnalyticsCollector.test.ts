@@ -149,6 +149,68 @@ describe('UsageAnalyticsCollector', () => {
     collector.shutdown();
   });
 
+  it('schedules queued events after a timer fires during a slow flush', async () => {
+    let resolveFirstEventRequest: (response: {
+      ok: boolean;
+      status: number;
+    }) => void = () => {};
+    let eventRequestCount = 0;
+    const fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/v1/events') && eventRequestCount++ === 0) {
+        return new Promise(resolve => {
+          resolveFirstEventRequest = resolve;
+        });
+      }
+      return Promise.resolve({ ok: true, status: 204 });
+    });
+    const collector = createCollector(fetch);
+
+    collector.captureEvent(createEvent());
+    await jest.advanceTimersByTimeAsync(5_000);
+    collector.captureEvent(createEvent());
+    await jest.advanceTimersByTimeAsync(5_000);
+    resolveFirstEventRequest({ ok: true, status: 204 });
+    await Promise.resolve();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    expect(eventRequests(fetch)).toHaveLength(2);
+    collector.shutdown();
+  });
+
+  it('resends an active batch with keepalive when the page is hidden', async () => {
+    let resolveFirstEventRequest: (response: {
+      ok: boolean;
+      status: number;
+    }) => void = () => {};
+    let eventRequestCount = 0;
+    const fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/v1/events') && eventRequestCount++ === 0) {
+        return new Promise(resolve => {
+          resolveFirstEventRequest = resolve;
+        });
+      }
+      return Promise.resolve({ ok: true, status: 204 });
+    });
+    const collector = createCollector(fetch);
+
+    collector.captureEvent(createEvent());
+    await jest.advanceTimersByTimeAsync(5_000);
+    window.dispatchEvent(new Event('pagehide'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const requests = eventRequests(fetch);
+    expect(requests).toHaveLength(2);
+    expect(requests[1][1].keepalive).toBe(true);
+    expect(JSON.parse(requests[1][1].body).events).toEqual(
+      JSON.parse(requests[0][1].body).events,
+    );
+
+    resolveFirstEventRequest({ ok: true, status: 204 });
+    collector.shutdown();
+  });
+
   it('limits the event queue to 1,000 entries', async () => {
     let resolveFirstEventRequest: (response: {
       ok: boolean;
